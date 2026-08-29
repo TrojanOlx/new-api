@@ -213,32 +213,45 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
       {devices.length > 0 && !devicesQuery.isError && (
         <>
           <div aria-label={t('Device table')} className='overflow-x-auto'>
-            <Table className='min-w-[1280px] table-fixed'>
+            <Table className='min-w-[760px] table-fixed'>
               <colgroup>
-                <col className='w-24' />
-                <col className='w-44' />
-                <col className='w-36' />
-                <col className='w-28' />
-                <col className='w-28' />
-                <col className='w-32' />
-                <col className='w-36' />
-                <col className='w-24' />
-                <col className='w-24' />
+                <col className='w-16' />
                 <col className='w-40' />
-                <col className='w-24' />
+                <col className='w-32' />
+                <col className='w-28' />
+                <col className='w-40' />
+                <col className='w-44' />
+                <col className='w-16' />
               </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('Device ID')}</TableHead>
                   <TableHead>{t('Client')}</TableHead>
                   <TableHead>{t('OS/Architecture')}</TableHead>
-                  <TableHead>{t('Confidence')}</TableHead>
-                  <TableHead>{t('Status')}</TableHead>
-                  <TableHead>{t('Client version')}</TableHead>
-                  <TableHead>{t('Last IP')}</TableHead>
-                  <TableHead>{t('IP count')}</TableHead>
-                  <TableHead>{t('Requests')}</TableHead>
-                  <TableHead>{t('Last seen')}</TableHead>
+                  <TableHead>
+                    <div className='flex flex-col gap-0.5'>
+                      <span>{t('Confidence')}</span>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Status')}
+                      </span>
+                    </div>
+                  </TableHead>
+                  <TableHead>
+                    <div className='flex flex-col gap-0.5'>
+                      <span>{t('Last IP')}</span>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('IP count')}
+                      </span>
+                    </div>
+                  </TableHead>
+                  <TableHead>
+                    <div className='flex flex-col gap-0.5'>
+                      <span>{t('Requests')}</span>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Last seen')}
+                      </span>
+                    </div>
+                  </TableHead>
                   <TableHead className='text-right'>{t('Actions')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -256,6 +269,10 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
                         <span className='text-muted-foreground text-xs'>
                           {item.originator || '-'}
                         </span>
+                        <span className='text-muted-foreground text-xs'>
+                          {t('Client version')}:{' '}
+                          {item.last_client_version || '-'}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -264,31 +281,44 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
                         .join(' / ') || '-'}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          item.confidence === 'low' ? 'warning' : 'secondary'
-                        }
-                      >
-                        {t(item.confidence)}
-                      </Badge>
+                      <div className='flex flex-col items-start gap-1'>
+                        <Badge
+                          variant={
+                            item.confidence === 'low' ? 'warning' : 'secondary'
+                          }
+                        >
+                          {t(item.confidence)}
+                        </Badge>
+                        <Badge
+                          variant={
+                            item.status === 'blocked'
+                              ? 'destructive'
+                              : 'outline'
+                          }
+                        >
+                          {t(item.status)}
+                        </Badge>
+                      </div>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          item.status === 'blocked' ? 'destructive' : 'outline'
-                        }
-                      >
-                        {t(item.status)}
-                      </Badge>
+                      <div className='flex flex-col gap-0.5'>
+                        <span className='font-mono text-xs'>
+                          {item.last_ip || '-'}
+                        </span>
+                        <span className='text-muted-foreground text-xs'>
+                          {t('IP count')}: {item.observed_ip_count}
+                        </span>
+                      </div>
                     </TableCell>
-                    <TableCell>{item.last_client_version || '-'}</TableCell>
-                    <TableCell className='font-mono text-xs'>
-                      {item.last_ip || '-'}
-                    </TableCell>
-                    <TableCell>{item.observed_ip_count}</TableCell>
-                    <TableCell>{item.request_count}</TableCell>
                     <TableCell>
-                      {formatTimestampToDate(item.last_seen_at)}
+                      <div className='flex flex-col gap-0.5'>
+                        <span>
+                          {t('Requests')}: {item.request_count}
+                        </span>
+                        <span className='text-muted-foreground text-xs'>
+                          {formatTimestampToDate(item.last_seen_at)}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell className='text-right'>
                       <DataTableRowActionMenu

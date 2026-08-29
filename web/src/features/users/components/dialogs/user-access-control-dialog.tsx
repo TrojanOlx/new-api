@@ -53,7 +53,7 @@ export function UserAccessControlDialog(props: UserAccessControlDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-4xl'>
+      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-5xl'>
         <DialogHeader>
           <DialogTitle>
             {t('Access control for {{username}}', {

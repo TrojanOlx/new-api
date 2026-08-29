@@ -28,6 +28,7 @@ import { toast } from 'sonner'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { formatTimestampToDate } from '@/lib/format'
 
 import { UserAccessControlDialog } from '../dialogs/user-access-control-dialog'
 
@@ -375,6 +376,36 @@ describe('UserAccessControlDialog', () => {
     })
   })
 
+  test('gives the selected policy modes a high-contrast visual state', async () => {
+    installApiFixtures([])
+    renderDialog()
+
+    const ipModeField = (await screen.findByText('IP policy mode')).closest(
+      '[data-slot="field"]'
+    )
+    const deviceModeField = screen
+      .getByText('Device policy mode')
+      .closest('[data-slot="field"]')
+    expect(ipModeField).not.toBeNull()
+    expect(deviceModeField).not.toBeNull()
+
+    const selectedIPMode = within(ipModeField as HTMLElement).getByRole(
+      'button',
+      { name: 'Unrestricted' }
+    )
+    const selectedDeviceMode = within(deviceModeField as HTMLElement).getByRole(
+      'button',
+      { name: 'Observe' }
+    )
+
+    for (const selectedMode of [selectedIPMode, selectedDeviceMode]) {
+      expect(selectedMode).toHaveAttribute('aria-pressed', 'true')
+      expect(selectedMode).toHaveAttribute('data-pressed')
+      expect(selectedMode).toHaveClass('data-pressed:bg-primary')
+      expect(selectedMode).toHaveClass('data-pressed:text-primary-foreground')
+    }
+  })
+
   test('blocks device allowlist save until a trusted allowed device exists', async () => {
     const patchCalls: ApiCall[] = []
     installApiFixtures(patchCalls)
@@ -415,15 +446,13 @@ describe('UserAccessControlDialog', () => {
       screen.getByRole('columnheader', { name: 'Device ID' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('columnheader', { name: 'Client version' })
+      screen.getByRole('columnheader', { name: /Last IP.*IP count/ })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('columnheader', { name: 'IP count' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('columnheader', { name: 'Requests' })
+      screen.getByRole('columnheader', { name: /Requests.*Last seen/ })
     ).toBeInTheDocument()
     expect(screen.getByText('#31')).toBeInTheDocument()
+    expect(screen.getByText('Client version: 1.2.3')).toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Actions for device 31' })
@@ -484,5 +513,31 @@ describe('UserAccessControlDialog', () => {
         data: { status: 'blocked' },
       })
     )
+  })
+
+  test('fits every device summary field inside the desktop access dialog', async () => {
+    installApiFixtures([])
+    renderDialog()
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Devices' }))
+    expect(await screen.findByText('Codex Desktop')).toBeInTheDocument()
+
+    const dialog = screen.getByRole('dialog')
+    const tableRegion = screen.getByLabelText('Device table')
+    const table = within(tableRegion).getByRole('table')
+    const deviceRow = screen.getByRole('row', { name: /#31/ })
+
+    expect(dialog).toHaveClass('sm:max-w-5xl')
+    expect(table).toHaveClass('min-w-[760px]')
+    expect(table).not.toHaveClass('min-w-[1280px]')
+    expect(within(deviceRow).getByText('203.0.113.11')).toBeInTheDocument()
+    expect(within(deviceRow).getByText('IP count: 2')).toBeInTheDocument()
+    expect(within(deviceRow).getByText('Requests: 12')).toBeInTheDocument()
+    expect(
+      within(deviceRow).getByText(formatTimestampToDate(device.last_seen_at))
+    ).toBeInTheDocument()
+    expect(
+      within(deviceRow).getByRole('button', { name: 'Actions for device 31' })
+    ).toBeInTheDocument()
   })
 })
