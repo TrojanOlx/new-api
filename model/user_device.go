@@ -61,23 +61,29 @@ func (UserDevice) TableName() string {
 // UserDeviceFingerprint stores one technical fingerprint alias for a logical
 // device. The unique user/hash index makes an alias belong to one user only.
 type UserDeviceFingerprint struct {
-	Id                   int    `json:"id" gorm:"primaryKey"`
-	UserId               int    `json:"user_id" gorm:"uniqueIndex:idx_user_fingerprint,priority:1"`
-	DeviceId             int    `json:"device_id" gorm:"index"`
-	FingerprintHash      string `json:"-" gorm:"type:char(64);uniqueIndex:idx_user_fingerprint,priority:2"`
-	CompatibilityHash    string `json:"-" gorm:"type:char(64);index"`
-	Status               string `json:"status" gorm:"type:varchar(16);index"`
-	GraceUntil           int64  `json:"grace_until"`
-	ClientVersion        string `json:"client_version" gorm:"type:varchar(64)"`
-	UserAgentHash        string `json:"-" gorm:"type:char(64)"`
-	TLSFingerprintHash   string `json:"-" gorm:"type:char(64)"`
-	HTTP2FingerprintHash string `json:"-" gorm:"type:char(64)"`
-	ShortId              string `json:"short_id" gorm:"-:all"`
-	FirstSeenAt          int64  `json:"first_seen_at"`
-	LastSeenAt           int64  `json:"last_seen_at"`
-	RequestCount         int64  `json:"request_count" gorm:"type:bigint"`
-	CreatedAt            int64  `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt            int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	Id                    int     `json:"id" gorm:"primaryKey"`
+	UserId                int     `json:"user_id" gorm:"uniqueIndex:idx_user_fingerprint,priority:1"`
+	DeviceId              int     `json:"device_id" gorm:"index"`
+	FingerprintHash       string  `json:"-" gorm:"type:char(64);uniqueIndex:idx_user_fingerprint,priority:2"`
+	CompatibilityHash     string  `json:"-" gorm:"type:char(64);index"`
+	Status                string  `json:"status" gorm:"type:varchar(16);index"`
+	GraceUntil            int64   `json:"grace_until"`
+	ClientVersion         string  `json:"client_version" gorm:"type:varchar(64)"`
+	RuntimeFamily         *string `json:"runtime_family" gorm:"type:varchar(32)"`
+	InstallationIDPresent *bool   `json:"installation_id_present"`
+	WindowIDPresent       *bool   `json:"window_id_present"`
+	UserAgentHash         string  `json:"-" gorm:"type:char(64)"`
+	TLSFingerprintHash    string  `json:"-" gorm:"type:char(64)"`
+	HTTP2FingerprintHash  string  `json:"-" gorm:"type:char(64)"`
+	UserAgentPresent      bool    `json:"user_agent_present" gorm:"-:all"`
+	JA4Present            bool    `json:"ja4_present" gorm:"-:all"`
+	HTTP2Present          bool    `json:"http2_present" gorm:"-:all"`
+	ShortId               string  `json:"short_id" gorm:"-:all"`
+	FirstSeenAt           int64   `json:"first_seen_at"`
+	LastSeenAt            int64   `json:"last_seen_at"`
+	RequestCount          int64   `json:"request_count" gorm:"type:bigint"`
+	CreatedAt             int64   `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt             int64   `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 func (UserDeviceFingerprint) TableName() string {
@@ -104,42 +110,48 @@ func (UserDeviceIP) TableName() string {
 // CreateUserDeviceInput is the internal, already privacy-filtered input from
 // the fingerprint service. It contains hashes, never raw request headers.
 type CreateUserDeviceInput struct {
-	UserId               int
-	FingerprintHash      string
-	CompatibilityHash    string
-	Status               string
-	ClientFamily         string
-	ClientVersion        string
-	OSFamily             string
-	Architecture         string
-	Originator           string
-	Confidence           string
-	UserAgentHash        string
-	TLSFingerprintHash   string
-	HTTP2FingerprintHash string
-	IPHash               string
-	IP                   string
-	FirstSeenAt          int64
-	Now                  int64
-	RequestCount         int64
-	DeniedCount          int64
+	UserId                int
+	FingerprintHash       string
+	CompatibilityHash     string
+	Status                string
+	ClientFamily          string
+	ClientVersion         string
+	OSFamily              string
+	Architecture          string
+	Originator            string
+	Confidence            string
+	RuntimeFamily         *string
+	InstallationIDPresent *bool
+	WindowIDPresent       *bool
+	UserAgentHash         string
+	TLSFingerprintHash    string
+	HTTP2FingerprintHash  string
+	IPHash                string
+	IP                    string
+	FirstSeenAt           int64
+	Now                   int64
+	RequestCount          int64
+	DeniedCount           int64
 }
 
 // AttachFingerprintInput is used when a new technical alias is associated
 // with an existing logical device during an upgrade or first observation.
 type AttachFingerprintInput struct {
-	UserId               int
-	DeviceId             int
-	FingerprintHash      string
-	CompatibilityHash    string
-	Status               string
-	GraceUntil           int64
-	ClientVersion        string
-	UserAgentHash        string
-	TLSFingerprintHash   string
-	HTTP2FingerprintHash string
-	FirstSeenAt          int64
-	LastSeenAt           int64
+	UserId                int
+	DeviceId              int
+	FingerprintHash       string
+	CompatibilityHash     string
+	Status                string
+	GraceUntil            int64
+	ClientVersion         string
+	RuntimeFamily         *string
+	InstallationIDPresent *bool
+	WindowIDPresent       *bool
+	UserAgentHash         string
+	TLSFingerprintHash    string
+	HTTP2FingerprintHash  string
+	FirstSeenAt           int64
+	LastSeenAt            int64
 }
 
 // UserDevicePatch contains only administrator-editable fields. Pointer
@@ -274,6 +286,9 @@ func setFingerprintShortID(fingerprint *UserDeviceFingerprint) {
 		shortLength = len(fingerprint.FingerprintHash)
 	}
 	fingerprint.ShortId = fingerprint.FingerprintHash[:shortLength]
+	fingerprint.UserAgentPresent = fingerprint.UserAgentHash != ""
+	fingerprint.JA4Present = fingerprint.TLSFingerprintHash != ""
+	fingerprint.HTTP2Present = fingerprint.HTTP2FingerprintHash != ""
 }
 
 func findUserDeviceFingerprintWithTx(tx *gorm.DB, userId int, fingerprintHash string) (*UserDeviceFingerprint, error) {
@@ -546,7 +561,9 @@ func createObservedUserDeviceOnce(input CreateUserDeviceInput) (*UserDevice, *Us
 		fingerprint := &UserDeviceFingerprint{
 			UserId: input.UserId, DeviceId: device.Id, FingerprintHash: input.FingerprintHash,
 			CompatibilityHash: input.CompatibilityHash, Status: string(constant.DeviceFingerprintPending),
-			ClientVersion: input.ClientVersion, UserAgentHash: input.UserAgentHash,
+			ClientVersion: input.ClientVersion, RuntimeFamily: input.RuntimeFamily,
+			InstallationIDPresent: input.InstallationIDPresent, WindowIDPresent: input.WindowIDPresent,
+			UserAgentHash:      input.UserAgentHash,
 			TLSFingerprintHash: input.TLSFingerprintHash, HTTP2FingerprintHash: input.HTTP2FingerprintHash,
 			FirstSeenAt: firstSeenAt, LastSeenAt: now, RequestCount: device.RequestCount,
 		}
@@ -671,7 +688,9 @@ func AttachUserDeviceFingerprint(input AttachFingerprintInput) (*UserDeviceFinge
 		fingerprint := &UserDeviceFingerprint{
 			UserId: input.UserId, DeviceId: input.DeviceId, FingerprintHash: input.FingerprintHash,
 			CompatibilityHash: input.CompatibilityHash, Status: status, GraceUntil: input.GraceUntil,
-			ClientVersion: input.ClientVersion, UserAgentHash: input.UserAgentHash,
+			ClientVersion: input.ClientVersion, RuntimeFamily: input.RuntimeFamily,
+			InstallationIDPresent: input.InstallationIDPresent, WindowIDPresent: input.WindowIDPresent,
+			UserAgentHash:      input.UserAgentHash,
 			TLSFingerprintHash: input.TLSFingerprintHash, HTTP2FingerprintHash: input.HTTP2FingerprintHash,
 			FirstSeenAt: firstSeenAt, LastSeenAt: now,
 		}

@@ -24,7 +24,7 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -79,6 +79,41 @@ interface UserDeviceDetailPanelProps {
 
 interface LoadedDeviceDetailProps extends UserDeviceDetailPanelProps {
   detail: UserDeviceDetail
+}
+
+interface DetailItemProps {
+  label: string
+  children: ReactNode
+  mono?: boolean
+}
+
+interface EvidenceStateProps {
+  value: boolean | null
+}
+
+function DetailItem(props: DetailItemProps) {
+  return (
+    <div className='min-w-0'>
+      <dt className='text-muted-foreground text-xs'>{props.label}</dt>
+      <dd
+        className={props.mono ? 'font-mono text-xs break-all' : 'break-words'}
+      >
+        {props.children}
+      </dd>
+    </div>
+  )
+}
+
+function EvidenceState(props: EvidenceStateProps) {
+  const { t } = useTranslation()
+  let label = t('Unknown')
+  if (props.value === true) label = t('Present')
+  if (props.value === false) label = t('Missing')
+  return <Badge variant='outline'>{label}</Badge>
+}
+
+function optionalTimestamp(value: number): string {
+  return value > 0 ? formatTimestampToDate(value) : '-'
 }
 
 function nextDeviceStatus(
@@ -196,6 +231,65 @@ function LoadedDeviceDetail(props: LoadedDeviceDetailProps) {
         </Alert>
       )}
 
+      <section
+        className='flex flex-col gap-2'
+        aria-labelledby='device-information-title'
+      >
+        <h3 id='device-information-title' className='text-sm font-medium'>
+          {t('Device information')}
+        </h3>
+        <dl className='grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4'>
+          <DetailItem label={t('Client')}>
+            {props.detail.device.client_family || '-'}
+          </DetailItem>
+          <DetailItem label={t('Originator')}>
+            {props.detail.device.originator || '-'}
+          </DetailItem>
+          <DetailItem label={t('Client version')}>
+            {props.detail.device.last_client_version || '-'}
+          </DetailItem>
+          <DetailItem label={t('Operating system')}>
+            {props.detail.device.os_family || '-'}
+          </DetailItem>
+          <DetailItem label={t('Architecture')}>
+            {props.detail.device.architecture || '-'}
+          </DetailItem>
+          <DetailItem label={t('Confidence')}>
+            <Badge variant='outline'>{t(props.detail.device.confidence)}</Badge>
+          </DetailItem>
+          <DetailItem label={t('First IP')} mono>
+            {props.detail.device.first_ip || '-'}
+          </DetailItem>
+          <DetailItem label={t('Last IP')} mono>
+            {props.detail.device.last_ip || '-'}
+          </DetailItem>
+          <DetailItem label={t('IP count')}>
+            {props.detail.device.observed_ip_count}
+          </DetailItem>
+          <DetailItem label={t('First seen')}>
+            {optionalTimestamp(props.detail.device.first_seen_at)}
+          </DetailItem>
+          <DetailItem label={t('Last seen')}>
+            {optionalTimestamp(props.detail.device.last_seen_at)}
+          </DetailItem>
+          <DetailItem label={t('Requests')}>
+            {props.detail.device.request_count}
+          </DetailItem>
+          <DetailItem label={t('Denied requests')}>
+            {props.detail.device.denied_count}
+          </DetailItem>
+          <DetailItem label={t('Fingerprint count')}>
+            {props.detail.fingerprints.length}
+          </DetailItem>
+          <DetailItem label={t('Created at')}>
+            {optionalTimestamp(props.detail.device.created_at)}
+          </DetailItem>
+          <DetailItem label={t('Updated at')}>
+            {optionalTimestamp(props.detail.device.updated_at)}
+          </DetailItem>
+        </dl>
+      </section>
+
       <FieldGroup>
         <Field>
           <FieldTitle id='device-review-status'>
@@ -256,97 +350,119 @@ function LoadedDeviceDetail(props: LoadedDeviceDetailProps) {
         <h3 id='fingerprints-title' className='text-sm font-medium'>
           {t('Fingerprint aliases')}
         </h3>
-        <div className='overflow-x-auto'>
-          <Table className='min-w-160'>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('Alias')}</TableHead>
-                <TableHead>{t('Status')}</TableHead>
-                <TableHead>{t('Client version')}</TableHead>
-                <TableHead>{t('Last seen')}</TableHead>
-                <TableHead className='text-right'>{t('Actions')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {props.detail.fingerprints.map((fingerprint) => (
-                <TableRow key={fingerprint.id}>
-                  <TableCell className='font-mono text-xs'>
+        <div className='divide-y rounded-md border'>
+          {props.detail.fingerprints.map((fingerprint) => (
+            <div
+              key={fingerprint.id}
+              role='group'
+              aria-label={t('Fingerprint {{shortId}}', {
+                shortId: fingerprint.short_id,
+              })}
+              className='flex flex-col gap-3 p-3'
+            >
+              <div className='flex flex-wrap items-center justify-between gap-2'>
+                <div className='flex items-center gap-2'>
+                  <span className='font-mono text-xs'>
                     {fingerprint.short_id}
-                  </TableCell>
-                  <TableCell>
-                    <div className='flex flex-col items-start gap-1'>
-                      <Badge variant='outline'>{t(fingerprint.status)}</Badge>
-                      {fingerprint.status === 'grace' &&
-                        fingerprint.grace_until > 0 && (
-                          <div className='text-muted-foreground flex flex-col text-xs'>
-                            <span>{t('Upgrade grace until')}</span>
-                            <span>
-                              {formatTimestampToDate(fingerprint.grace_until)}
-                            </span>
-                          </div>
-                        )}
-                    </div>
-                  </TableCell>
-                  <TableCell>{fingerprint.client_version || '-'}</TableCell>
-                  <TableCell>
-                    {formatTimestampToDate(fingerprint.last_seen_at)}
-                  </TableCell>
-                  <TableCell>
-                    <div className='flex justify-end gap-1'>
-                      {fingerprint.status !== 'trusted' && (
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          disabled={fingerprintMutation.isPending}
-                          aria-label={t('Trust fingerprint {{shortId}}', {
-                            shortId: fingerprint.short_id,
-                          })}
-                          onClick={() =>
-                            setPendingFingerprintUpdate({
-                              fingerprintId: fingerprint.id,
-                              shortId: fingerprint.short_id,
-                              status: 'trusted',
-                            })
-                          }
-                        >
-                          <HugeiconsIcon
-                            icon={CheckmarkCircle02Icon}
-                            data-icon='inline-start'
-                          />
-                          {t('Trust')}
-                        </Button>
-                      )}
-                      {fingerprint.status !== 'blocked' && (
-                        <Button
-                          type='button'
-                          variant='destructive'
-                          size='sm'
-                          disabled={fingerprintMutation.isPending}
-                          aria-label={t('Block fingerprint {{shortId}}', {
-                            shortId: fingerprint.short_id,
-                          })}
-                          onClick={() =>
-                            setPendingFingerprintUpdate({
-                              fingerprintId: fingerprint.id,
-                              shortId: fingerprint.short_id,
-                              status: 'blocked',
-                            })
-                          }
-                        >
-                          <HugeiconsIcon
-                            icon={BlockedIcon}
-                            data-icon='inline-start'
-                          />
-                          {t('Block')}
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </span>
+                  <Badge variant='outline'>{t(fingerprint.status)}</Badge>
+                </div>
+                <div className='flex flex-wrap justify-end gap-1'>
+                  {fingerprint.status !== 'trusted' && (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      disabled={fingerprintMutation.isPending}
+                      aria-label={t('Trust fingerprint {{shortId}}', {
+                        shortId: fingerprint.short_id,
+                      })}
+                      onClick={() =>
+                        setPendingFingerprintUpdate({
+                          fingerprintId: fingerprint.id,
+                          shortId: fingerprint.short_id,
+                          status: 'trusted',
+                        })
+                      }
+                    >
+                      <HugeiconsIcon
+                        icon={CheckmarkCircle02Icon}
+                        data-icon='inline-start'
+                      />
+                      {t('Trust')}
+                    </Button>
+                  )}
+                  {fingerprint.status !== 'blocked' && (
+                    <Button
+                      type='button'
+                      variant='destructive'
+                      size='sm'
+                      disabled={fingerprintMutation.isPending}
+                      aria-label={t('Block fingerprint {{shortId}}', {
+                        shortId: fingerprint.short_id,
+                      })}
+                      onClick={() =>
+                        setPendingFingerprintUpdate({
+                          fingerprintId: fingerprint.id,
+                          shortId: fingerprint.short_id,
+                          status: 'blocked',
+                        })
+                      }
+                    >
+                      <HugeiconsIcon
+                        icon={BlockedIcon}
+                        data-icon='inline-start'
+                      />
+                      {t('Block')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <dl className='grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4'>
+                <DetailItem label={t('Client version')}>
+                  {fingerprint.client_version || '-'}
+                </DetailItem>
+                <DetailItem label={t('Runtime')}>
+                  {fingerprint.runtime_family === null
+                    ? t('Unknown')
+                    : fingerprint.runtime_family || t('Missing')}
+                </DetailItem>
+                <DetailItem label={t('First seen')}>
+                  {optionalTimestamp(fingerprint.first_seen_at)}
+                </DetailItem>
+                <DetailItem label={t('Last seen')}>
+                  {optionalTimestamp(fingerprint.last_seen_at)}
+                </DetailItem>
+                <DetailItem label={t('Requests')}>
+                  {fingerprint.request_count}
+                </DetailItem>
+                <DetailItem label={t('Created at')}>
+                  {optionalTimestamp(fingerprint.created_at)}
+                </DetailItem>
+                <DetailItem label={t('Updated at')}>
+                  {optionalTimestamp(fingerprint.updated_at)}
+                </DetailItem>
+                <DetailItem label={t('Upgrade grace until')}>
+                  {optionalTimestamp(fingerprint.grace_until)}
+                </DetailItem>
+                <DetailItem label={t('Installation ID')}>
+                  <EvidenceState value={fingerprint.installation_id_present} />
+                </DetailItem>
+                <DetailItem label={t('Window ID')}>
+                  <EvidenceState value={fingerprint.window_id_present} />
+                </DetailItem>
+                <DetailItem label={t('User-Agent')}>
+                  <EvidenceState value={fingerprint.user_agent_present} />
+                </DetailItem>
+                <DetailItem label={t('JA4')}>
+                  <EvidenceState value={fingerprint.ja4_present} />
+                </DetailItem>
+                <DetailItem label={t('HTTP/2')}>
+                  <EvidenceState value={fingerprint.http2_present} />
+                </DetailItem>
+              </dl>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -362,6 +478,7 @@ function LoadedDeviceDetail(props: LoadedDeviceDetailProps) {
             <TableHeader>
               <TableRow>
                 <TableHead>{t('IP address')}</TableHead>
+                <TableHead>{t('First seen')}</TableHead>
                 <TableHead>{t('Last seen')}</TableHead>
                 <TableHead className='text-right'>{t('Requests')}</TableHead>
               </TableRow>
@@ -371,6 +488,9 @@ function LoadedDeviceDetail(props: LoadedDeviceDetailProps) {
                 <TableRow key={recentIP.id}>
                   <TableCell className='font-mono text-xs'>
                     {recentIP.ip}
+                  </TableCell>
+                  <TableCell>
+                    {optionalTimestamp(recentIP.first_seen_at)}
                   </TableCell>
                   <TableCell>
                     {formatTimestampToDate(recentIP.last_seen_at)}

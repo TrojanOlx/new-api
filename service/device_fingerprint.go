@@ -30,19 +30,21 @@ type DeviceRequestMetadata struct {
 }
 
 type DeviceFingerprintEvidence struct {
-	FingerprintHash      string
-	CompatibilityHash    string
-	ClientFamily         string
-	ClientVersion        string
-	OSFamily             string
-	Architecture         string
-	Originator           string
-	RuntimeFamily        string
-	UserAgentHash        string
-	WindowHintHash       string
-	TLSFingerprintHash   string
-	HTTP2FingerprintHash string
-	Confidence           string
+	FingerprintHash       string
+	CompatibilityHash     string
+	ClientFamily          string
+	ClientVersion         string
+	OSFamily              string
+	Architecture          string
+	Originator            string
+	RuntimeFamily         string
+	InstallationIDPresent bool
+	WindowIDPresent       bool
+	UserAgentHash         string
+	WindowHintHash        string
+	TLSFingerprintHash    string
+	HTTP2FingerprintHash  string
+	Confidence            string
 }
 
 func truncateDeviceHeader(value string, maxBytes int) string {
@@ -300,18 +302,20 @@ func BuildDeviceFingerprint(meta DeviceRequestMetadata) (DeviceFingerprintEviden
 	}
 
 	return DeviceFingerprintEvidence{
-		FingerprintHash:      common.GenerateHMACWithKey([]byte("device-profile-v1:"+secret), profileMaterial),
-		CompatibilityHash:    common.GenerateHMACWithKey([]byte("device-compat-v1:"+secret), compatibilityMaterial),
-		ClientFamily:         clientFamily,
-		ClientVersion:        clientVersion,
-		OSFamily:             osFamily,
-		Architecture:         architecture,
-		Originator:           normalizedOriginator,
-		RuntimeFamily:        runtimeFamily,
-		UserAgentHash:        userAgentHash,
-		WindowHintHash:       windowHintHash,
-		TLSFingerprintHash:   tlsFingerprintHash,
-		HTTP2FingerprintHash: http2FingerprintHash,
-		Confidence:           confidence,
+		FingerprintHash:       common.GenerateHMACWithKey([]byte("device-profile-v1:"+secret), profileMaterial),
+		CompatibilityHash:     common.GenerateHMACWithKey([]byte("device-compat-v1:"+secret), compatibilityMaterial),
+		ClientFamily:          clientFamily,
+		ClientVersion:         clientVersion,
+		OSFamily:              osFamily,
+		Architecture:          architecture,
+		Originator:            normalizedOriginator,
+		RuntimeFamily:         runtimeFamily,
+		InstallationIDPresent: installation != "",
+		WindowIDPresent:       window != "",
+		UserAgentHash:         userAgentHash,
+		WindowHintHash:        windowHintHash,
+		TLSFingerprintHash:    tlsFingerprintHash,
+		HTTP2FingerprintHash:  http2FingerprintHash,
+		Confidence:            confidence,
 	}, nil
 }

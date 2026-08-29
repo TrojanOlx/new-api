@@ -133,6 +133,8 @@ func decodeUserAccessPolicyTestEnvelope(t *testing.T, response *httptest.Respons
 
 func seedUserAccessPolicyTestDevice(t *testing.T, db *gorm.DB, userID int, status, fingerprintStatus string, suffix byte) (*model.UserDevice, *model.UserDeviceFingerprint) {
 	t.Helper()
+	runtimeFamily := "node"
+	evidencePresent := true
 	device := &model.UserDevice{
 		UserId: userID, Status: status, CompatibilityHash: strings.Repeat(string(suffix), 64),
 		ClientFamily: "Codex Desktop", OSFamily: "Windows", Architecture: "amd64",
@@ -143,6 +145,7 @@ func seedUserAccessPolicyTestDevice(t *testing.T, db *gorm.DB, userID int, statu
 	fingerprint := &model.UserDeviceFingerprint{
 		UserId: userID, DeviceId: device.Id, FingerprintHash: strings.Repeat(string(suffix+1), 64),
 		CompatibilityHash: device.CompatibilityHash, Status: fingerprintStatus,
+		RuntimeFamily: &runtimeFamily, InstallationIDPresent: &evidencePresent, WindowIDPresent: &evidencePresent,
 		UserAgentHash: strings.Repeat(string(suffix+2), 64), TLSFingerprintHash: strings.Repeat(string(suffix+3), 64),
 		HTTP2FingerprintHash: strings.Repeat(string(suffix+4), 64), FirstSeenAt: 10, LastSeenAt: 20,
 	}
@@ -368,9 +371,17 @@ func TestUserDeviceEndpointsReturnSafeListAndDetailShapes(t *testing.T) {
 	require.Equal(t, http.StatusOK, detail.Code)
 	assert.Contains(t, detail.Body.String(), `"fingerprints"`)
 	assert.Contains(t, detail.Body.String(), `"recent_ips"`)
+	assert.Contains(t, detail.Body.String(), `"runtime_family":"node"`)
+	assert.Contains(t, detail.Body.String(), `"installation_id_present":true`)
+	assert.Contains(t, detail.Body.String(), `"window_id_present":true`)
+	assert.Contains(t, detail.Body.String(), `"user_agent_present":true`)
+	assert.Contains(t, detail.Body.String(), `"ja4_present":true`)
+	assert.Contains(t, detail.Body.String(), `"http2_present":true`)
 	assert.NotContains(t, detail.Body.String(), fingerprint.FingerprintHash)
+	assert.NotContains(t, detail.Body.String(), fingerprint.CompatibilityHash)
 	assert.NotContains(t, detail.Body.String(), fingerprint.UserAgentHash)
 	assert.NotContains(t, detail.Body.String(), fingerprint.TLSFingerprintHash)
+	assert.NotContains(t, detail.Body.String(), fingerprint.HTTP2FingerprintHash)
 
 	devicePatch := userAccessPolicyTestRequest(t, fixture.router, http.MethodPatch, base+"/"+strconv.Itoa(device.Id), fixture.root,
 		map[string]any{"status": "allowed", "remark": "Office workstation"})

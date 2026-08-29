@@ -152,6 +152,8 @@ func TestBuildDeviceFingerprintOnlyStoresHMACsForSensitiveHints(t *testing.T) {
 	assert.NotContains(t, evidence.FingerprintHash, "installation-secret-value")
 	assert.NotContains(t, evidence.WindowHintHash, "window-secret-value")
 	assert.Equal(t, common.GenerateHMACWithKey([]byte("device-window-v1:"+common.DeviceFingerprintSecret), "window-secret-value"), evidence.WindowHintHash)
+	assert.True(t, evidence.InstallationIDPresent)
+	assert.True(t, evidence.WindowIDPresent)
 	assert.NotEmpty(t, evidence.TLSFingerprintHash)
 	assert.NotEmpty(t, evidence.HTTP2FingerprintHash)
 }
@@ -173,6 +175,8 @@ func TestBuildDeviceFingerprintWindowDoesNotChangePermanentHashes(t *testing.T) 
 
 	assert.Equal(t, withoutWindow.FingerprintHash, withWindow.FingerprintHash)
 	assert.Equal(t, withoutWindow.CompatibilityHash, withWindow.CompatibilityHash)
+	assert.False(t, withoutWindow.WindowIDPresent)
+	assert.True(t, withWindow.WindowIDPresent)
 	assert.NotEqual(t, withoutWindow.WindowHintHash, withWindow.WindowHintHash)
 }
 

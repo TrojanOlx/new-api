@@ -119,6 +119,12 @@ const detail = {
       status: 'pending',
       grace_until: 0,
       client_version: '1.2.3',
+      runtime_family: 'node',
+      installation_id_present: true,
+      window_id_present: true,
+      user_agent_present: true,
+      ja4_present: true,
+      http2_present: true,
       short_id: 'fp-short-001',
       first_seen_at: 1_787_990_000,
       last_seen_at: 1_787_990_100,
@@ -133,6 +139,12 @@ const detail = {
       status: 'grace',
       grace_until: 1_788_162_900,
       client_version: '1.2.4',
+      runtime_family: null,
+      installation_id_present: null,
+      window_id_present: null,
+      user_agent_present: false,
+      ja4_present: false,
+      http2_present: false,
       short_id: 'fp-grace-002',
       first_seen_at: 1_787_990_100,
       last_seen_at: 1_787_990_200,
@@ -220,6 +232,17 @@ function renderDialog(open = true): void {
       />
     </QueryClientProvider>
   )
+}
+
+function expectDefinitionValue(
+  container: HTMLElement,
+  label: string,
+  value: string
+): void {
+  const term = within(container).getByText(label)
+  const item = term.parentElement
+  expect(item).not.toBeNull()
+  expect(within(item as HTMLElement).getByText(value)).toBeInTheDocument()
 }
 
 afterEach(() => {
@@ -459,8 +482,50 @@ describe('UserAccessControlDialog', () => {
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'View' }))
     expect(await screen.findByText('fp-short-001')).toBeInTheDocument()
-    expect(screen.getByText('203.0.113.11')).toBeInTheDocument()
-    expect(screen.getByText('Upgrade grace until')).toBeInTheDocument()
+    expect(screen.getAllByText('203.0.113.11')).toHaveLength(2)
+    expect(screen.getAllByText('Upgrade grace until')).toHaveLength(2)
+
+    const deviceInformation = screen.getByRole('region', {
+      name: 'Device information',
+    })
+    expectDefinitionValue(deviceInformation, 'Client', 'Codex Desktop')
+    expectDefinitionValue(deviceInformation, 'Originator', 'codex')
+    expectDefinitionValue(deviceInformation, 'Operating system', 'Windows')
+    expectDefinitionValue(deviceInformation, 'Architecture', 'amd64')
+    expectDefinitionValue(deviceInformation, 'Client version', '1.2.3')
+    expectDefinitionValue(deviceInformation, 'First IP', '203.0.113.10')
+    expectDefinitionValue(deviceInformation, 'Last IP', '203.0.113.11')
+    expectDefinitionValue(deviceInformation, 'IP count', '2')
+    expectDefinitionValue(deviceInformation, 'Requests', '12')
+    expectDefinitionValue(deviceInformation, 'Denied requests', '1')
+    expectDefinitionValue(deviceInformation, 'Fingerprint count', '2')
+    expectDefinitionValue(
+      deviceInformation,
+      'First seen',
+      formatTimestampToDate(device.first_seen_at)
+    )
+    expectDefinitionValue(
+      deviceInformation,
+      'Last seen',
+      formatTimestampToDate(device.last_seen_at)
+    )
+
+    const fingerprintDetails = screen.getByRole('group', {
+      name: 'Fingerprint fp-short-001',
+    })
+    expect(within(fingerprintDetails).getByText('node')).toBeInTheDocument()
+    expect(within(fingerprintDetails).getAllByText('Present')).toHaveLength(5)
+    expect(within(fingerprintDetails).getByText('12')).toBeInTheDocument()
+
+    const legacyFingerprintDetails = screen.getByRole('group', {
+      name: 'Fingerprint fp-grace-002',
+    })
+    expect(
+      within(legacyFingerprintDetails).getAllByText('Unknown')
+    ).toHaveLength(3)
+    expect(
+      within(legacyFingerprintDetails).getAllByText('Missing')
+    ).toHaveLength(3)
 
     fireEvent.change(screen.getByLabelText('Administrator remark'), {
       target: { value: 'reviewed locally' },

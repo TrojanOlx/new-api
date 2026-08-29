@@ -115,24 +115,60 @@ func createDeviceTestUser(t *testing.T, username string) *User {
 }
 
 func observedDeviceInput(userID int, fingerprint string, now int64) CreateUserDeviceInput {
+	runtimeFamily := "node"
+	evidencePresent := true
 	return CreateUserDeviceInput{
-		UserId:               userID,
-		FingerprintHash:      deviceTestHash(fingerprint),
-		CompatibilityHash:    deviceTestHash("compat-" + fingerprint),
-		Status:               string(constant.UserDevicePending),
-		ClientFamily:         "Codex Desktop",
-		ClientVersion:        "0.150",
-		OSFamily:             "Windows",
-		Architecture:         "amd64",
-		Originator:           "codex",
-		Confidence:           "high",
-		UserAgentHash:        deviceTestHash("ua-" + fingerprint),
-		TLSFingerprintHash:   deviceTestHash("tls-" + fingerprint),
-		HTTP2FingerprintHash: deviceTestHash("h2-" + fingerprint),
-		IPHash:               deviceTestHash("ip-" + fingerprint),
-		IP:                   "192.0.2.1",
-		Now:                  now,
+		UserId:                userID,
+		FingerprintHash:       deviceTestHash(fingerprint),
+		CompatibilityHash:     deviceTestHash("compat-" + fingerprint),
+		Status:                string(constant.UserDevicePending),
+		ClientFamily:          "Codex Desktop",
+		ClientVersion:         "0.150",
+		OSFamily:              "Windows",
+		Architecture:          "amd64",
+		Originator:            "codex",
+		Confidence:            "high",
+		RuntimeFamily:         &runtimeFamily,
+		InstallationIDPresent: &evidencePresent,
+		WindowIDPresent:       &evidencePresent,
+		UserAgentHash:         deviceTestHash("ua-" + fingerprint),
+		TLSFingerprintHash:    deviceTestHash("tls-" + fingerprint),
+		HTTP2FingerprintHash:  deviceTestHash("h2-" + fingerprint),
+		IPHash:                deviceTestHash("ip-" + fingerprint),
+		IP:                    "192.0.2.1",
+		Now:                   now,
 	}
+}
+
+func TestUserDeviceDetailReturnsSafeFingerprintEvidence(t *testing.T) {
+	truncateTables(t)
+	user := createDeviceTestUser(t, "device-safe-evidence")
+	input := observedDeviceInput(user.Id, "safe-evidence", time.Now().Unix())
+	device, fingerprint, err := CreateObservedUserDevice(input)
+	require.NoError(t, err)
+
+	detail, err := GetUserDeviceDetail(user.Id, device.Id)
+	require.NoError(t, err)
+	require.Len(t, detail.Fingerprints, 1)
+	visible := detail.Fingerprints[0]
+	require.NotNil(t, visible.RuntimeFamily)
+	assert.Equal(t, "node", *visible.RuntimeFamily)
+	require.NotNil(t, visible.InstallationIDPresent)
+	assert.True(t, *visible.InstallationIDPresent)
+	require.NotNil(t, visible.WindowIDPresent)
+	assert.True(t, *visible.WindowIDPresent)
+	assert.True(t, visible.UserAgentPresent)
+	assert.True(t, visible.JA4Present)
+	assert.True(t, visible.HTTP2Present)
+
+	payload, err := common.Marshal(detail)
+	require.NoError(t, err)
+	serialized := string(payload)
+	assert.NotContains(t, serialized, fingerprint.FingerprintHash)
+	assert.NotContains(t, serialized, fingerprint.CompatibilityHash)
+	assert.NotContains(t, serialized, fingerprint.UserAgentHash)
+	assert.NotContains(t, serialized, fingerprint.TLSFingerprintHash)
+	assert.NotContains(t, serialized, fingerprint.HTTP2FingerprintHash)
 }
 
 func TestUserDeviceCreateObservedReusesUniqueFingerprint(t *testing.T) {
