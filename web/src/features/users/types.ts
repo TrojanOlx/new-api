@@ -146,6 +146,224 @@ export interface ManageUserQuotaPayload {
 }
 
 // ============================================================================
+// Administrator Access-Control Schemas & Types
+// ============================================================================
+
+const nonNegativeIntegerSchema = z.number().int().nonnegative()
+
+export const userIPPolicyModeSchema = z.enum(['unrestricted', 'allowlist'])
+export type UserIPPolicyMode = z.infer<typeof userIPPolicyModeSchema>
+
+export const userDevicePolicyModeSchema = z.enum([
+  'off',
+  'observe',
+  'allowlist',
+  'blacklist',
+])
+export type UserDevicePolicyMode = z.infer<typeof userDevicePolicyModeSchema>
+
+export const userDeviceStatusSchema = z.enum(['pending', 'allowed', 'blocked'])
+export type UserDeviceStatus = z.infer<typeof userDeviceStatusSchema>
+
+export const userDeviceConfidenceSchema = z.enum(['low', 'medium', 'high'])
+export type UserDeviceConfidence = z.infer<typeof userDeviceConfidenceSchema>
+
+export const userDeviceFingerprintStatusSchema = z.enum([
+  'pending',
+  'trusted',
+  'grace',
+  'blocked',
+])
+export type UserDeviceFingerprintStatus = z.infer<
+  typeof userDeviceFingerprintStatusSchema
+>
+
+export const userDeviceFingerprintUpdateStatusSchema = z.enum([
+  'pending',
+  'trusted',
+  'blocked',
+])
+export type UserDeviceFingerprintUpdateStatus = z.infer<
+  typeof userDeviceFingerprintUpdateStatusSchema
+>
+
+export const userAccessPolicySchema = z
+  .object({
+    user_id: z.number().int().positive(),
+    ip_mode: userIPPolicyModeSchema,
+    ip_allowlist: z.array(z.string()).max(64),
+    device_mode: userDevicePolicyModeSchema,
+    access_policy_version: z.number().int().positive(),
+    fingerprint_ready: z.boolean(),
+    upgrade_grace_hours: nonNegativeIntegerSchema,
+    active_network_window_minutes: nonNegativeIntegerSchema,
+  })
+  .strict()
+export type UserAccessPolicy = z.infer<typeof userAccessPolicySchema>
+
+export const userAccessPolicyUpdateSchema = z
+  .object({
+    ip_mode: userIPPolicyModeSchema.optional(),
+    ip_allowlist: z.array(z.string()).max(64).optional(),
+    device_mode: userDevicePolicyModeSchema.optional(),
+  })
+  .strict()
+export type UserAccessPolicyUpdate = z.infer<
+  typeof userAccessPolicyUpdateSchema
+>
+export type UserAccessPolicyPatch = UserAccessPolicyUpdate
+
+const userDeviceFields = {
+  id: z.number().int().positive(),
+  user_id: z.number().int().positive(),
+  status: userDeviceStatusSchema,
+  client_family: z.string(),
+  os_family: z.string(),
+  architecture: z.string(),
+  originator: z.string(),
+  confidence: userDeviceConfidenceSchema,
+  first_seen_at: nonNegativeIntegerSchema,
+  last_seen_at: nonNegativeIntegerSchema,
+  first_ip: z.string().max(45),
+  last_ip: z.string().max(45),
+  observed_ip_count: nonNegativeIntegerSchema,
+  request_count: nonNegativeIntegerSchema,
+  denied_count: nonNegativeIntegerSchema,
+  last_client_version: z.string().max(64),
+  remark: z.string().max(255),
+  created_at: nonNegativeIntegerSchema,
+  updated_at: nonNegativeIntegerSchema,
+}
+
+export const userDeviceSchema = z.object(userDeviceFields).strict()
+export type UserDevice = z.infer<typeof userDeviceSchema>
+
+export const userDeviceSummarySchema = z
+  .object({
+    ...userDeviceFields,
+    fingerprint_count: nonNegativeIntegerSchema,
+    recent_ip_count: nonNegativeIntegerSchema,
+  })
+  .strict()
+export type UserDeviceSummary = z.infer<typeof userDeviceSummarySchema>
+
+export const userDeviceFingerprintSchema = z
+  .object({
+    id: z.number().int().positive(),
+    user_id: z.number().int().positive(),
+    device_id: z.number().int().positive(),
+    status: userDeviceFingerprintStatusSchema,
+    grace_until: nonNegativeIntegerSchema,
+    client_version: z.string().max(64),
+    short_id: z.string().max(12),
+    first_seen_at: nonNegativeIntegerSchema,
+    last_seen_at: nonNegativeIntegerSchema,
+    request_count: nonNegativeIntegerSchema,
+    created_at: nonNegativeIntegerSchema,
+    updated_at: nonNegativeIntegerSchema,
+  })
+  .strict()
+export type UserDeviceFingerprint = z.infer<typeof userDeviceFingerprintSchema>
+
+export const userDeviceIPSchema = z
+  .object({
+    id: z.number().int().positive(),
+    user_id: z.number().int().positive(),
+    device_id: z.number().int().positive(),
+    ip: z.string().max(45),
+    first_seen_at: nonNegativeIntegerSchema,
+    last_seen_at: nonNegativeIntegerSchema,
+    request_count: nonNegativeIntegerSchema,
+  })
+  .strict()
+export type UserDeviceIP = z.infer<typeof userDeviceIPSchema>
+
+export const userDeviceDetailSchema = z
+  .object({
+    device: userDeviceSchema,
+    fingerprints: z.array(userDeviceFingerprintSchema),
+    recent_ips: z.array(userDeviceIPSchema).max(10),
+  })
+  .strict()
+export type UserDeviceDetail = z.infer<typeof userDeviceDetailSchema>
+
+export const userDeviceUpdateSchema = z
+  .object({
+    status: userDeviceStatusSchema.optional(),
+    remark: z.string().max(255).optional(),
+  })
+  .strict()
+export type UserDeviceUpdate = z.infer<typeof userDeviceUpdateSchema>
+export type UserDevicePatch = UserDeviceUpdate
+
+export const userDeviceFingerprintUpdateSchema = z
+  .object({
+    status: userDeviceFingerprintUpdateStatusSchema,
+  })
+  .strict()
+export type UserDeviceFingerprintUpdate = z.infer<
+  typeof userDeviceFingerprintUpdateSchema
+>
+export type UserDeviceFingerprintPatch = UserDeviceFingerprintUpdate
+
+export interface GetUserDevicesParams {
+  p?: number
+  page_size?: number
+  status?: UserDeviceStatus
+}
+
+export type ListUserDevicesParams = GetUserDevicesParams
+
+export const userDeviceListDataSchema = z
+  .object({
+    items: z.array(userDeviceSummarySchema),
+    total: nonNegativeIntegerSchema,
+    page: z.number().int().positive(),
+    page_size: z.number().int().positive(),
+  })
+  .strict()
+export type UserDeviceListData = z.infer<typeof userDeviceListDataSchema>
+
+export const userAccessPolicyApiResponseSchema = z
+  .object({
+    success: z.literal(true),
+    message: z.string().optional(),
+    data: userAccessPolicySchema,
+  })
+  .strict()
+export type UserAccessPolicyApiResponse = z.infer<
+  typeof userAccessPolicyApiResponseSchema
+>
+export type GetUserAccessPolicyResponse = UserAccessPolicyApiResponse
+
+export const userDeviceListApiResponseSchema = z
+  .object({
+    success: z.literal(true),
+    message: z.string().optional(),
+    data: userDeviceListDataSchema,
+  })
+  .strict()
+export type UserDeviceListApiResponse = z.infer<
+  typeof userDeviceListApiResponseSchema
+>
+export type GetUserDevicesResponse = UserDeviceListApiResponse
+
+export const userDeviceDetailApiResponseSchema = z
+  .object({
+    success: z.literal(true),
+    message: z.string().optional(),
+    data: userDeviceDetailSchema,
+  })
+  .strict()
+export type UserDeviceDetailApiResponse = z.infer<
+  typeof userDeviceDetailApiResponseSchema
+>
+export type GetUserDeviceResponse = UserDeviceDetailApiResponse
+export type UpdateUserAccessPolicyResponse = UserAccessPolicyApiResponse
+export type UpdateUserDeviceResponse = UserDeviceDetailApiResponse
+export type UpdateUserDeviceFingerprintResponse = UserDeviceDetailApiResponse
+
+// ============================================================================
 // Dialog Types
 // ============================================================================
 

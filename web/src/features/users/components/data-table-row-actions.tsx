@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { SecurityCheckIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import type { Row } from '@tanstack/react-table'
 import {
   Pencil,
@@ -57,6 +59,7 @@ import {
 } from '../constants'
 import { getUserActionMessage } from '../lib'
 import type { User, ManageUserAction } from '../types'
+import { UserAccessControlDialog } from './dialogs/user-access-control-dialog'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { useUsers } from './users-provider'
 
@@ -72,6 +75,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [accessControlDialogOpen, setAccessControlDialogOpen] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -222,6 +226,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
 
+        <DropdownMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            setAccessControlDialogOpen(true)
+          }}
+        >
+          {t('Manage Access Control')}
+          <DropdownMenuShortcut>
+            <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
@@ -300,6 +316,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setSubscriptionsDialogOpen}
         user={{ id: user.id, username: user.username }}
         onSuccess={triggerRefresh}
+      />
+
+      <UserAccessControlDialog
+        open={accessControlDialogOpen}
+        onOpenChange={setAccessControlDialogOpen}
+        user={{ id: user.id, username: user.username }}
       />
     </div>
   )

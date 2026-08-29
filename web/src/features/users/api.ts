@@ -20,15 +20,28 @@ import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
 
-import type {
-  User,
-  GetUsersParams,
-  GetUsersResponse,
-  SearchUsersParams,
-  UserFormData,
-  ManageUserAction,
-  ManageUserQuotaPayload,
-  ApiResponse,
+import {
+  userAccessPolicyApiResponseSchema,
+  userDeviceDetailApiResponseSchema,
+  userDeviceFingerprintUpdateSchema,
+  userDeviceListApiResponseSchema,
+  userDeviceUpdateSchema,
+  userAccessPolicyUpdateSchema,
+  type ApiResponse,
+  type GetUserDevicesParams,
+  type User,
+  type GetUsersParams,
+  type GetUsersResponse,
+  type SearchUsersParams,
+  type UserFormData,
+  type ManageUserAction,
+  type ManageUserQuotaPayload,
+  type UserAccessPolicyApiResponse,
+  type UserAccessPolicyUpdate,
+  type UserDeviceDetailApiResponse,
+  type UserDeviceFingerprintUpdate,
+  type UserDeviceListApiResponse,
+  type UserDeviceUpdate,
 } from './types'
 
 // ============================================================================
@@ -173,6 +186,94 @@ export async function getPermissionCatalog(): Promise<PermissionCatalog> {
     resources: res.data?.data?.resources ?? [],
     roles: res.data?.data?.roles ?? [],
   }
+}
+
+// ============================================================================
+// Administrator Access-Control APIs
+// ============================================================================
+
+/**
+ * Get a user's normalized access policy.
+ */
+export async function getUserAccessPolicy(
+  userId: number
+): Promise<UserAccessPolicyApiResponse> {
+  const res = await api.get(`/api/user/${userId}/access-policy`)
+  return userAccessPolicyApiResponseSchema.parse(res.data)
+}
+
+/**
+ * Partially update a user's access policy. Omitted fields are preserved by the
+ * backend; an explicit empty allowlist remains distinguishable from omission.
+ */
+export async function updateUserAccessPolicy(
+  userId: number,
+  payload: UserAccessPolicyUpdate
+): Promise<UserAccessPolicyApiResponse> {
+  const validatedPayload = userAccessPolicyUpdateSchema.parse(payload)
+  const res = await api.patch(
+    `/api/user/${userId}/access-policy`,
+    validatedPayload
+  )
+  return userAccessPolicyApiResponseSchema.parse(res.data)
+}
+
+/**
+ * Get a paginated list of safe device projections for a user.
+ */
+export async function getUserDevices(
+  userId: number,
+  params: GetUserDevicesParams = {}
+): Promise<UserDeviceListApiResponse> {
+  const res = await api.get(`/api/user/${userId}/devices`, { params })
+  return userDeviceListApiResponseSchema.parse(res.data)
+}
+
+/** Alias matching the backend's list operation name. */
+export const listUserDevices = getUserDevices
+
+/**
+ * Get one device, its fingerprint aliases, and its recent IP history.
+ */
+export async function getUserDevice(
+  userId: number,
+  deviceId: number
+): Promise<UserDeviceDetailApiResponse> {
+  const res = await api.get(`/api/user/${userId}/devices/${deviceId}`)
+  return userDeviceDetailApiResponseSchema.parse(res.data)
+}
+
+/**
+ * Update administrator-editable device fields and return refreshed detail.
+ */
+export async function updateUserDevice(
+  userId: number,
+  deviceId: number,
+  payload: UserDeviceUpdate
+): Promise<UserDeviceDetailApiResponse> {
+  const validatedPayload = userDeviceUpdateSchema.parse(payload)
+  const res = await api.patch(
+    `/api/user/${userId}/devices/${deviceId}`,
+    validatedPayload
+  )
+  return userDeviceDetailApiResponseSchema.parse(res.data)
+}
+
+/**
+ * Update one fingerprint alias status and return refreshed device detail.
+ */
+export async function updateUserDeviceFingerprint(
+  userId: number,
+  deviceId: number,
+  fingerprintId: number,
+  payload: UserDeviceFingerprintUpdate
+): Promise<UserDeviceDetailApiResponse> {
+  const validatedPayload = userDeviceFingerprintUpdateSchema.parse(payload)
+  const res = await api.patch(
+    `/api/user/${userId}/devices/${deviceId}/fingerprints/${fingerprintId}`,
+    validatedPayload
+  )
+  return userDeviceDetailApiResponseSchema.parse(res.data)
 }
 
 // ============================================================================
