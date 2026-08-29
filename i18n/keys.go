@@ -40,6 +40,16 @@ const (
 	MsgAuthInsufficientPrivilege = "auth.insufficient_privilege"
 )
 
+// User access policy messages
+const (
+	MsgUserAccessIPNotAllowed        = "user_access.ip_not_allowed"
+	MsgUserAccessDeviceNotAllowed    = "user_access.device_not_allowed"
+	MsgUserAccessDeviceBlocked       = "user_access.device_blocked"
+	MsgUserAccessUpgradeGraceExpired = "user_access.upgrade_grace_expired"
+	MsgUserAccessNetworkConflict     = "user_access.network_conflict"
+	MsgUserAccessUnavailable         = "user_access.unavailable"
+)
+
 // Token related messages
 const (
 	MsgTokenNameTooLong          = "token.name_too_long"

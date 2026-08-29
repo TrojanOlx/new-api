@@ -33,6 +33,14 @@ auth.user_id_mismatch: "Unauthorized, New-Api-User does not match logged in user
 auth.user_banned: "User has been banned"
 auth.insufficient_privilege: "Unauthorized, insufficient privileges"
 
+# User access policy messages
+user_access.ip_not_allowed: "This IP address is not allowed"
+user_access.device_not_allowed: "This device is not allowed"
+user_access.device_blocked: "This device has been blocked"
+user_access.upgrade_grace_expired: "The device upgrade review period has expired"
+user_access.network_conflict: "A network conflict was detected for this device"
+user_access.unavailable: "User access control is temporarily unavailable"
+
 # Token messages
 token.name_too_long: "Token name is too long"
 token.quota_negative: "Quota value cannot be negative"

@@ -34,6 +34,14 @@ auth.user_id_mismatch: "无权进行此操作，New-Api-User 与登录用户不�
 auth.user_banned: "用户已被封禁"
 auth.insufficient_privilege: "无权进行此操作，权限不足"
 
+# User access policy messages
+user_access.ip_not_allowed: "当前 IP 地址不在允许范围内"
+user_access.device_not_allowed: "当前设备未被允许"
+user_access.device_blocked: "当前设备已被阻止"
+user_access.upgrade_grace_expired: "设备升级审核已过期"
+user_access.network_conflict: "检测到当前设备存在网络冲突"
+user_access.unavailable: "访问控制暂时不可用"
+
 # Token messages
 token.name_too_long: "令牌名称过长"
 token.quota_negative: "额度值不能为负数"
