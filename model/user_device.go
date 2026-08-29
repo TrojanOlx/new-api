@@ -149,6 +149,20 @@ type UserDevicePatch struct {
 	Remark *string
 }
 
+type UserDeviceMutation struct {
+	Before        UserDevice
+	After         UserDevice
+	Changed       bool
+	StatusChanged bool
+	RemarkChanged bool
+}
+
+type UserDeviceFingerprintMutation struct {
+	Before  UserDeviceFingerprint
+	After   UserDeviceFingerprint
+	Changed bool
+}
+
 // UserDeviceSummary is the safe list projection used by the administrator
 // API. It intentionally has no compatibility or fingerprint HMAC fields.
 type UserDeviceSummary struct {
@@ -796,15 +810,18 @@ func GetUserDeviceDetail(userId int, deviceId int) (*UserDeviceDetail, error) {
 // or alias state changes. An allowed device trusts pending/grace aliases while
 // leaving explicit blocked aliases untouched.
 func UpdateUserDevice(userId int, deviceId int, patch UserDevicePatch) error {
+	_, err := UpdateUserDeviceWithSnapshot(userId, deviceId, patch)
+	return err
+}
+
+func UpdateUserDeviceWithSnapshot(userId int, deviceId int, patch UserDevicePatch) (*UserDeviceMutation, error) {
 	if userId <= 0 || deviceId <= 0 {
-		return errors.New("invalid user device owner")
-	}
-	if patch.Status == nil && patch.Remark == nil {
-		return nil
+		return nil, errors.New("invalid user device owner")
 	}
 	if patch.Remark != nil && utf8.RuneCountInString(*patch.Remark) > 255 {
-		return errors.New("device remark is too long")
+		return nil, errors.New("device remark is too long")
 	}
+	mutation := &UserDeviceMutation{}
 	var versionChanged bool
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserDeviceOwnerWithTx(tx, userId); err != nil {
@@ -814,11 +831,14 @@ func UpdateUserDevice(userId int, deviceId int, patch UserDevicePatch) error {
 		if err != nil {
 			return err
 		}
+		mutation.Before = *device
 		updates := make(map[string]interface{})
 		if patch.Remark != nil {
-			updates["remark"] = *patch.Remark
+			mutation.RemarkChanged = *patch.Remark != device.Remark
+			if mutation.RemarkChanged {
+				updates["remark"] = *patch.Remark
+			}
 		}
-		statusChanged := false
 		newStatus := device.Status
 		if patch.Status != nil {
 			newStatus = strings.TrimSpace(*patch.Status)
@@ -826,7 +846,7 @@ func UpdateUserDevice(userId int, deviceId int, patch UserDevicePatch) error {
 				return ErrInvalidUserDeviceStatus
 			}
 			if newStatus != device.Status {
-				statusChanged = true
+				mutation.StatusChanged = true
 				updates["status"] = newStatus
 			}
 		}
@@ -836,7 +856,7 @@ func UpdateUserDevice(userId int, deviceId int, patch UserDevicePatch) error {
 			}
 		}
 		aliasChanged := false
-		if newStatus == string(constant.UserDeviceAllowed) {
+		if mutation.StatusChanged && newStatus == string(constant.UserDeviceAllowed) {
 			result := tx.Model(&UserDeviceFingerprint{}).
 				Where("user_id = ? AND device_id = ? AND status IN ?", userId, deviceId,
 					[]string{string(constant.DeviceFingerprintPending), string(constant.DeviceFingerprintGrace)}).
@@ -846,7 +866,13 @@ func UpdateUserDevice(userId int, deviceId int, patch UserDevicePatch) error {
 			}
 			aliasChanged = result.RowsAffected > 0
 		}
-		versionChanged = statusChanged || aliasChanged
+		mutation.Changed = mutation.StatusChanged || mutation.RemarkChanged
+		mutation.After = mutation.Before
+		mutation.After.Status = newStatus
+		if patch.Remark != nil {
+			mutation.After.Remark = *patch.Remark
+		}
+		versionChanged = mutation.StatusChanged || aliasChanged
 		if !versionChanged {
 			return nil
 		}
@@ -854,25 +880,30 @@ func UpdateUserDevice(userId int, deviceId int, patch UserDevicePatch) error {
 		return err
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if versionChanged {
-		return PublishUserAccessPolicyCache(userId)
+	if err := publishUserAccessPolicyCacheForMutation(userId); err != nil {
+		return mutation, fmt.Errorf("%w: %v", ErrUserAccessPolicyCachePublish, err)
 	}
-	return nil
+	return mutation, nil
 }
 
 // UpdateUserDeviceFingerprint updates a manually reviewable alias. Grace is
 // system-owned and therefore cannot be assigned by this administrator API.
 func UpdateUserDeviceFingerprint(userId int, deviceId int, fingerprintId int, status string) error {
+	_, err := UpdateUserDeviceFingerprintWithSnapshot(userId, deviceId, fingerprintId, status)
+	return err
+}
+
+func UpdateUserDeviceFingerprintWithSnapshot(userId int, deviceId int, fingerprintId int, status string) (*UserDeviceFingerprintMutation, error) {
 	if userId <= 0 || deviceId <= 0 || fingerprintId <= 0 {
-		return errors.New("invalid user device fingerprint owner")
+		return nil, errors.New("invalid user device fingerprint owner")
 	}
 	status = strings.TrimSpace(status)
 	if status == string(constant.DeviceFingerprintGrace) || !constant.IsValidUserDeviceFingerprintStatus(status) {
-		return ErrInvalidUserDeviceFingerprintStatus
+		return nil, ErrInvalidUserDeviceFingerprintStatus
 	}
-	var versionChanged bool
+	mutation := &UserDeviceFingerprintMutation{}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserDeviceOwnerWithTx(tx, userId); err != nil {
 			return err
@@ -881,23 +912,27 @@ func UpdateUserDeviceFingerprint(userId int, deviceId int, fingerprintId int, st
 		if err := lockForUpdate(tx).Where("user_id = ? AND device_id = ? AND id = ?", userId, deviceId, fingerprintId).First(&fingerprint).Error; err != nil {
 			return err
 		}
+		setFingerprintShortID(&fingerprint)
+		mutation.Before = fingerprint
+		mutation.After = fingerprint
 		if fingerprint.Status == status {
 			return nil
 		}
 		if err := tx.Model(&UserDeviceFingerprint{}).Where("user_id = ? AND device_id = ? AND id = ?", userId, deviceId, fingerprintId).Update("status", status).Error; err != nil {
 			return err
 		}
-		versionChanged = true
+		mutation.Changed = true
+		mutation.After.Status = status
 		_, err := IncrementUserAccessPolicyVersionWithTx(tx, userId)
 		return err
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if versionChanged {
-		return PublishUserAccessPolicyCache(userId)
+	if err := publishUserAccessPolicyCacheForMutation(userId); err != nil {
+		return mutation, fmt.Errorf("%w: %v", ErrUserAccessPolicyCachePublish, err)
 	}
-	return nil
+	return mutation, nil
 }
 
 // CountAllowedTrustedDevices counts devices that are both allowed and have a
@@ -906,8 +941,12 @@ func CountAllowedTrustedDevices(userId int) (int64, error) {
 	if userId <= 0 {
 		return 0, errors.New("invalid user id")
 	}
+	return countAllowedTrustedDevicesWithTx(DB, userId)
+}
+
+func countAllowedTrustedDevicesWithTx(tx *gorm.DB, userId int) (int64, error) {
 	var count int64
-	err := DB.Model(&UserDeviceFingerprint{}).
+	err := tx.Model(&UserDeviceFingerprint{}).
 		Joins("JOIN user_devices ON user_devices.id = user_device_fingerprints.device_id AND user_devices.user_id = user_device_fingerprints.user_id").
 		Where("user_device_fingerprints.user_id = ? AND user_devices.status = ? AND user_device_fingerprints.status = ?", userId, string(constant.UserDeviceAllowed), string(constant.DeviceFingerprintTrusted)).
 		Distinct("user_device_fingerprints.device_id").Count(&count).Error

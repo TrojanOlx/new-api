@@ -15,11 +15,25 @@ import (
 
 var ErrUserAccessPolicyCachePending = errors.New("user access policy update is pending")
 var ErrUserAccessPolicyVersionConflict = errors.New("user access policy version update conflicted")
+var ErrUserAccessPolicyCachePublish = errors.New("user access policy cache publish failed after commit")
+var ErrUserDeviceAllowlistSecretUnavailable = errors.New("device fingerprint secret is unavailable")
+var ErrUserDeviceAllowlistTrustedDeviceRequired = errors.New("at least one allowed device with a trusted fingerprint is required")
+
+var publishUserAccessPolicyCacheForMutation = PublishUserAccessPolicyCache
 
 type UserAccessPolicyPatch struct {
 	IPMode          *string
 	IPAllowlistJSON *string
 	DeviceMode      *string
+}
+
+// UserAccessPolicyMutation contains the state observed while holding the user
+// row lock. Controllers use it to audit only the change committed by their
+// own transaction.
+type UserAccessPolicyMutation struct {
+	Before  User
+	After   User
+	Changed bool
 }
 
 func getUserAccessPolicyFenceKey(userId int) string {
@@ -141,16 +155,42 @@ func InitializeUserAccessPolicyVersions() error {
 }
 
 func UpdateUserAccessPolicy(userId int, patch UserAccessPolicyPatch) (*User, bool, error) {
-	if userId <= 0 {
-		return nil, false, fmt.Errorf("invalid user id")
+	mutation, err := UpdateUserAccessPolicyWithSnapshot(userId, patch)
+	if mutation == nil {
+		return nil, false, err
 	}
-	var updated User
-	changed := false
+	return &mutation.After, mutation.Changed, err
+}
+
+func UpdateUserAccessPolicyWithSnapshot(userId int, patch UserAccessPolicyPatch) (*UserAccessPolicyMutation, error) {
+	return updateUserAccessPolicy(userId, patch, false)
+}
+
+// UpdateUserAccessPolicyForAdmin atomically enforces the device allowlist
+// prerequisites while holding the same user row lock used by device updates.
+func UpdateUserAccessPolicyForAdmin(userId int, patch UserAccessPolicyPatch) (*User, bool, error) {
+	mutation, err := UpdateUserAccessPolicyForAdminWithSnapshot(userId, patch)
+	if mutation == nil {
+		return nil, false, err
+	}
+	return &mutation.After, mutation.Changed, err
+}
+
+func UpdateUserAccessPolicyForAdminWithSnapshot(userId int, patch UserAccessPolicyPatch) (*UserAccessPolicyMutation, error) {
+	return updateUserAccessPolicy(userId, patch, true)
+}
+
+func updateUserAccessPolicy(userId int, patch UserAccessPolicyPatch, validateDeviceAllowlist bool) (*UserAccessPolicyMutation, error) {
+	if userId <= 0 {
+		return nil, fmt.Errorf("invalid user id")
+	}
+	mutation := &UserAccessPolicyMutation{}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var current User
 		if err := lockForUpdate(tx).Where("id = ?", userId).First(&current).Error; err != nil {
 			return err
 		}
+		mutation.Before = current
 
 		currentIPMode := current.APIIPMode
 		if currentIPMode == "" {
@@ -197,24 +237,36 @@ func UpdateUserAccessPolicy(userId int, patch UserAccessPolicyPatch) (*User, boo
 			}
 			allowlistJSON = string(encoded)
 		}
+		var allowlistValues []string
+		if err := common.Unmarshal([]byte(allowlistJSON), &allowlistValues); err != nil {
+			return fmt.Errorf("invalid stored user IP allowlist: %w", err)
+		}
 		if ipMode == string(constant.UserIPPolicyAllowlist) {
-			var values []string
-			if err := common.Unmarshal([]byte(allowlistJSON), &values); err != nil {
-				return fmt.Errorf("invalid stored user IP allowlist: %w", err)
-			}
-			if len(values) == 0 {
+			if len(allowlistValues) == 0 {
 				return common.ErrUserIPAllowlistEmpty
 			}
 		}
+		if validateDeviceAllowlist && deviceMode == string(constant.UserDevicePolicyAllowlist) {
+			if !common.DeviceFingerprintReady() {
+				return ErrUserDeviceAllowlistSecretUnavailable
+			}
+			trustedDevices, err := countAllowedTrustedDevicesWithTx(tx, userId)
+			if err != nil {
+				return err
+			}
+			if trustedDevices == 0 {
+				return ErrUserDeviceAllowlistTrustedDeviceRequired
+			}
+		}
 
-		changed = ipMode != currentIPMode || allowlistJSON != currentAllowlistJSON || deviceMode != currentDeviceMode
-		if !changed {
-			updated = current
-			updated.APIIPMode = ipMode
-			updated.APIIPAllowlist = allowlistJSON
-			updated.DevicePolicyMode = deviceMode
-			if updated.AccessPolicyVersion < 1 {
-				updated.AccessPolicyVersion = 1
+		mutation.Changed = ipMode != currentIPMode || allowlistJSON != currentAllowlistJSON || deviceMode != currentDeviceMode
+		if !mutation.Changed {
+			mutation.After = current
+			mutation.After.APIIPMode = ipMode
+			mutation.After.APIIPAllowlist = allowlistJSON
+			mutation.After.DevicePolicyMode = deviceMode
+			if mutation.After.AccessPolicyVersion < 1 {
+				mutation.After.AccessPolicyVersion = 1
 			}
 			return nil
 		}
@@ -230,19 +282,17 @@ func UpdateUserAccessPolicy(userId int, patch UserAccessPolicyPatch) (*User, boo
 		}).Error; err != nil {
 			return err
 		}
-		if err := tx.First(&updated, userId).Error; err != nil {
+		if err := tx.First(&mutation.After, userId).Error; err != nil {
 			return err
 		}
-		updated.AccessPolicyVersion = next
+		mutation.After.AccessPolicyVersion = next
 		return nil
 	})
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if changed {
-		if err := PublishUserAccessPolicyCache(userId); err != nil {
-			return &updated, true, err
-		}
+	if err := publishUserAccessPolicyCacheForMutation(userId); err != nil {
+		return mutation, fmt.Errorf("%w: %v", ErrUserAccessPolicyCachePublish, err)
 	}
-	return &updated, changed, nil
+	return mutation, nil
 }

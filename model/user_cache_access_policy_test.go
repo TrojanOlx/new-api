@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -61,6 +62,107 @@ func TestUserAccessPolicyDefaultsAndUpdatesWithoutChangingAuthVersion(t *testing
 	require.NoError(t, err)
 	assert.False(t, changed)
 	assert.EqualValues(t, 2, updated.AccessPolicyVersion)
+}
+
+func TestUpdateUserAccessPolicyRetriesCachePublishAfterCommittedFailure(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedisEnabled })
+	user := User{
+		Username: "policy-publish-retry", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AccessPolicyVersion: 1,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+	previousPublish := publishUserAccessPolicyCacheForMutation
+	publishCalls := 0
+	publishUserAccessPolicyCacheForMutation = func(int) error {
+		publishCalls++
+		if publishCalls == 1 {
+			return errors.New("cache unavailable")
+		}
+		return nil
+	}
+	t.Cleanup(func() { publishUserAccessPolicyCacheForMutation = previousPublish })
+
+	mode := string(constant.UserIPPolicyAllowlist)
+	allowlist := `["203.0.113.10"]`
+	updated, changed, err := UpdateUserAccessPolicy(user.Id, UserAccessPolicyPatch{IPMode: &mode, IPAllowlistJSON: &allowlist})
+	require.True(t, changed)
+	require.NotNil(t, updated)
+	assert.ErrorIs(t, err, ErrUserAccessPolicyCachePublish)
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, mode, stored.APIIPMode)
+
+	_, changed, err = UpdateUserAccessPolicy(user.Id, UserAccessPolicyPatch{IPMode: &mode, IPAllowlistJSON: &allowlist})
+	require.NoError(t, err)
+	assert.False(t, changed)
+	assert.Equal(t, 2, publishCalls)
+}
+
+func TestUpdateUserAccessPolicyWithSnapshotReturnsLockedBeforeAfterAndChanged(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedisEnabled })
+
+	user := User{
+		Username: "policy-snapshot", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+		APIIPMode: string(constant.UserIPPolicyUnrestricted), APIIPAllowlist: "[]",
+		DevicePolicyMode: string(constant.UserDevicePolicyOff), AccessPolicyVersion: 1,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	mode := string(constant.UserIPPolicyAllowlist)
+	allowlist := `["192.0.2.0/24"]`
+	mutation, err := UpdateUserAccessPolicyWithSnapshot(user.Id, UserAccessPolicyPatch{
+		IPMode: &mode, IPAllowlistJSON: &allowlist,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, mutation)
+	assert.True(t, mutation.Changed)
+	assert.Equal(t, string(constant.UserIPPolicyUnrestricted), mutation.Before.APIIPMode)
+	assert.Equal(t, "[]", mutation.Before.APIIPAllowlist)
+	assert.Equal(t, string(constant.UserIPPolicyAllowlist), mutation.After.APIIPMode)
+	assert.Equal(t, allowlist, mutation.After.APIIPAllowlist)
+
+	// A no-op must return equal snapshots and must not attribute an unrelated
+	// profile update to the access-policy mutation.
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Update("display_name", "unrelated").Error)
+	noOp, err := UpdateUserAccessPolicyWithSnapshot(user.Id, UserAccessPolicyPatch{
+		IPMode: &mode, IPAllowlistJSON: &allowlist,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, noOp)
+	assert.False(t, noOp.Changed)
+	assert.Equal(t, noOp.Before.APIIPMode, noOp.After.APIIPMode)
+	assert.Equal(t, noOp.Before.APIIPAllowlist, noOp.After.APIIPAllowlist)
+	assert.Equal(t, noOp.Before.DevicePolicyMode, noOp.After.DevicePolicyMode)
+}
+
+func TestUpdateUserAccessPolicyRejectsInvalidStoredAllowlistBeforeCommit(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedisEnabled })
+	user := User{
+		Username: "policy-invalid-stored-allowlist", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+		APIIPMode: string(constant.UserIPPolicyUnrestricted), APIIPAllowlist: "{invalid",
+		DevicePolicyMode: string(constant.UserDevicePolicyOff), AccessPolicyVersion: 1,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	deviceMode := string(constant.UserDevicePolicyObserve)
+	mutation, err := UpdateUserAccessPolicyWithSnapshot(user.Id, UserAccessPolicyPatch{DeviceMode: &deviceMode})
+	assert.Error(t, err)
+	assert.Nil(t, mutation)
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, string(constant.UserDevicePolicyOff), stored.DevicePolicyMode)
+	assert.EqualValues(t, 1, stored.AccessPolicyVersion)
 }
 
 func TestUserAccessPolicyEmptyPatchDoesNotVersionLegacyDefaults(t *testing.T) {

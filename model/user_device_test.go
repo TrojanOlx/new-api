@@ -25,6 +25,79 @@ func deviceTestHash(prefix string) string {
 	return prefix + strings.Repeat("0", 64-len(prefix))
 }
 
+func TestUpdateUserDeviceRetriesCachePublishAfterCommittedFailure(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedisEnabled })
+	user := createDeviceTestUser(t, "device-publish-retry")
+	device, _, err := CreateObservedUserDevice(observedDeviceInput(user.Id, "device-publish-retry", time.Now().Unix()))
+	require.NoError(t, err)
+	previousPublish := publishUserAccessPolicyCacheForMutation
+	publishCalls := 0
+	publishUserAccessPolicyCacheForMutation = func(int) error {
+		publishCalls++
+		if publishCalls == 1 {
+			return errors.New("cache unavailable")
+		}
+		return nil
+	}
+	t.Cleanup(func() { publishUserAccessPolicyCacheForMutation = previousPublish })
+
+	blocked := string(constant.UserDeviceBlocked)
+	err = UpdateUserDevice(user.Id, device.Id, UserDevicePatch{Status: &blocked})
+	assert.ErrorIs(t, err, ErrUserAccessPolicyCachePublish)
+	var stored UserDevice
+	require.NoError(t, DB.First(&stored, device.Id).Error)
+	assert.Equal(t, blocked, stored.Status)
+
+	require.NoError(t, UpdateUserDevice(user.Id, device.Id, UserDevicePatch{Status: &blocked}))
+	assert.Equal(t, 2, publishCalls)
+}
+
+func TestUpdateUserDeviceWithSnapshotReturnsLockedBeforeAfterAndChanged(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedisEnabled })
+	user := createDeviceTestUser(t, "device-snapshot")
+	device, _, err := CreateObservedUserDevice(observedDeviceInput(user.Id, "snapshot", time.Now().Unix()))
+	require.NoError(t, err)
+
+	allowed := string(constant.UserDeviceAllowed)
+	mutation, err := UpdateUserDeviceWithSnapshot(user.Id, device.Id, UserDevicePatch{Status: &allowed})
+	require.NoError(t, err)
+	require.NotNil(t, mutation)
+	assert.True(t, mutation.Changed)
+	assert.Equal(t, string(constant.UserDevicePending), mutation.Before.Status)
+	assert.Equal(t, allowed, mutation.After.Status)
+
+	noOp, err := UpdateUserDeviceWithSnapshot(user.Id, device.Id, UserDevicePatch{Status: &allowed})
+	require.NoError(t, err)
+	require.NotNil(t, noOp)
+	assert.False(t, noOp.Changed)
+	assert.Equal(t, noOp.Before.Status, noOp.After.Status)
+	assert.Equal(t, noOp.Before.Remark, noOp.After.Remark)
+
+	// The first device transition above intentionally auto-trusts its pending
+	// alias. Use a fresh device to exercise an actual administrator alias
+	// transition and its locked before/after snapshot.
+	secondDevice, secondFingerprint, err := CreateObservedUserDevice(observedDeviceInput(user.Id, "snapshot-alias", time.Now().Unix()))
+	require.NoError(t, err)
+	fingerprintStatus, err := UpdateUserDeviceFingerprintWithSnapshot(user.Id, secondDevice.Id, secondFingerprint.Id, string(constant.DeviceFingerprintTrusted))
+	require.NoError(t, err)
+	require.NotNil(t, fingerprintStatus)
+	assert.True(t, fingerprintStatus.Changed)
+	assert.Equal(t, string(constant.DeviceFingerprintTrusted), fingerprintStatus.After.Status)
+	assert.Equal(t, secondFingerprint.ShortId, fingerprintStatus.Before.ShortId)
+
+	fingerprintNoOp, err := UpdateUserDeviceFingerprintWithSnapshot(user.Id, secondDevice.Id, secondFingerprint.Id, string(constant.DeviceFingerprintTrusted))
+	require.NoError(t, err)
+	require.NotNil(t, fingerprintNoOp)
+	assert.False(t, fingerprintNoOp.Changed)
+	assert.Equal(t, fingerprintNoOp.Before.Status, fingerprintNoOp.After.Status)
+}
+
 func createDeviceTestUser(t *testing.T, username string) *User {
 	t.Helper()
 	user := &User{
