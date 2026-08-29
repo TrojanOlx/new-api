@@ -11,19 +11,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const userCacheSchemaVersion = 2
+const userCacheSchemaVersion = 3
 
 type UserBase struct {
-	Id          int    `json:"id"`
-	Group       string `json:"group"`
-	Email       string `json:"email"`
-	Quota       int    `json:"quota"`
-	Status      int    `json:"status"`
-	Role        int    `json:"role"`
-	Username    string `json:"username"`
-	Setting     string `json:"setting"`
-	AuthVersion int64  `json:"-"`
-	CacheSchema int    `json:"-"`
+	Id                  int    `json:"id"`
+	Group               string `json:"group"`
+	Email               string `json:"email"`
+	Quota               int    `json:"quota"`
+	Status              int    `json:"status"`
+	Role                int    `json:"role"`
+	Username            string `json:"username"`
+	Setting             string `json:"setting"`
+	AuthVersion         int64  `json:"-"`
+	APIIPMode           string `json:"-"`
+	APIIPAllowlist      string `json:"-"`
+	DevicePolicyMode    string `json:"-"`
+	AccessPolicyVersion int64  `json:"-"`
+	CacheSchema         int    `json:"-"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -114,6 +118,44 @@ func GetUserCache(userId int) (*UserBase, error) {
 	return user.ToBaseUser(), nil
 }
 
+// GetUserCacheForAccess reads the same user snapshot as GetUserCache while
+// additionally enforcing the access-policy version fence.
+func GetUserCacheForAccess(userId int) (*UserBase, error) {
+	userCache, err := cacheGetUserBaseForAccess(userId)
+	if err == nil {
+		return userCache, nil
+	}
+
+	user, err := GetUserById(userId, false)
+	if err != nil {
+		return nil, err
+	}
+	if common.RedisEnabled {
+		authFloor, floorErr := getUserAuthVersionFloor(userId)
+		if floorErr != nil {
+			return nil, floorErr
+		}
+		if authFloor > user.AuthVersion {
+			return nil, ErrUserAuthCachePending
+		}
+		accessFloor, floorErr := getUserAccessPolicyVersionFloor(userId)
+		if floorErr != nil {
+			return nil, floorErr
+		}
+		accessVersion := user.AccessPolicyVersion
+		if accessVersion < 1 {
+			accessVersion = 1
+		}
+		if accessFloor > accessVersion {
+			return nil, ErrUserAccessPolicyCachePending
+		}
+		if err := populateUserCache(*user); err != nil {
+			return nil, err
+		}
+	}
+	return user.ToBaseUser(), nil
+}
+
 func cacheGetUserBase(userId int) (*UserBase, error) {
 	if !common.RedisEnabled {
 		return nil, fmt.Errorf("redis is not enabled")
@@ -124,7 +166,8 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	if err != nil {
 		return nil, err
 	}
-	if userCache.Id != userId || userCache.CacheSchema != userCacheSchemaVersion || userCache.AuthVersion <= 0 {
+	if userCache.Id != userId || userCache.CacheSchema != userCacheSchemaVersion ||
+		userCache.AuthVersion <= 0 || userCache.AccessPolicyVersion <= 0 {
 		return nil, fmt.Errorf("user cache schema is stale")
 	}
 	floor, err := getUserAuthVersionFloor(userId)
@@ -135,6 +178,21 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 		return nil, ErrUserAuthCachePending
 	}
 	return &userCache, nil
+}
+
+func cacheGetUserBaseForAccess(userId int) (*UserBase, error) {
+	userCache, err := cacheGetUserBase(userId)
+	if err != nil {
+		return nil, err
+	}
+	floor, err := getUserAccessPolicyVersionFloor(userId)
+	if err != nil {
+		return nil, err
+	}
+	if floor > userCache.AccessPolicyVersion {
+		return nil, ErrUserAccessPolicyCachePending
+	}
+	return userCache, nil
 }
 
 // Add atomic quota operations using hash fields.

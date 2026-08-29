@@ -53,47 +53,82 @@ func writeUserCache(user *UserBase, includeQuota bool) error {
 	if user.AuthVersion <= 0 {
 		return fmt.Errorf("invalid user auth version")
 	}
+	if user.AccessPolicyVersion <= 0 {
+		user.AccessPolicyVersion = 1
+	}
+	if user.APIIPMode == "" {
+		user.APIIPMode = "unrestricted"
+	}
+	if user.APIIPAllowlist == "" {
+		user.APIIPAllowlist = "[]"
+	}
+	if user.DevicePolicyMode == "" {
+		user.DevicePolicyMode = "off"
+	}
 	includeQuotaArg := "0"
 	if includeQuota {
 		includeQuotaArg = "1"
 	}
 	ttl := userCacheTTLSeconds()
 	const script = `
-local incoming = tonumber(ARGV[1])
-local pending = tonumber(redis.call('GET', KEYS[2]) or '0')
-local committed = tonumber(redis.call('GET', KEYS[3]) or '0')
-local current = tonumber(redis.call('HGET', KEYS[1], 'AuthVersion') or '0')
-if pending > incoming or committed > incoming or current > incoming then
+local incoming_auth = tonumber(ARGV[1])
+local incoming_access = tonumber(ARGV[2])
+local auth_pending = tonumber(redis.call('GET', KEYS[2]) or '0')
+local auth_committed = tonumber(redis.call('GET', KEYS[3]) or '0')
+local auth_current = tonumber(redis.call('HGET', KEYS[1], 'AuthVersion') or '0')
+if auth_pending > incoming_auth or auth_committed > incoming_auth or auth_current > incoming_auth then
   return 0
 end
-if committed < incoming then
+local access_pending = tonumber(redis.call('GET', KEYS[4]) or '0')
+local access_committed = tonumber(redis.call('GET', KEYS[5]) or '0')
+local access_current = tonumber(redis.call('HGET', KEYS[1], 'AccessPolicyVersion') or '0')
+if access_pending > incoming_access or access_committed > incoming_access or access_current > incoming_access then
+  return -1
+end
+if auth_committed < incoming_auth then
   redis.call('SET', KEYS[3], ARGV[1])
 end
-if pending > 0 and pending <= incoming then
+if auth_pending > 0 and auth_pending <= incoming_auth then
   redis.call('DEL', KEYS[2])
 end
-if ARGV[10] == '0' and redis.call('EXISTS', KEYS[1]) == 0 then
+if access_committed < incoming_access then
+  redis.call('SET', KEYS[5], ARGV[2])
+end
+if access_pending > 0 and access_pending <= incoming_access then
+  redis.call('DEL', KEYS[4])
+end
+if ARGV[14] == '0' and redis.call('EXISTS', KEYS[1]) == 0 then
   return 1
 end
 redis.call('HSET', KEYS[1],
-  'Id', ARGV[2], 'Group', ARGV[3], 'Email', ARGV[4],
-  'Status', ARGV[5], 'Role', ARGV[6], 'Username', ARGV[7],
-  'Setting', ARGV[8], 'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9])
-if ARGV[10] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
-  redis.call('HSET', KEYS[1], 'Quota', ARGV[11])
+  'Id', ARGV[3], 'Group', ARGV[4], 'Email', ARGV[5],
+  'Status', ARGV[6], 'Role', ARGV[7], 'Username', ARGV[8],
+  'Setting', ARGV[9], 'AuthVersion', ARGV[1],
+  'APIIPMode', ARGV[10], 'APIIPAllowlist', ARGV[11],
+  'DevicePolicyMode', ARGV[12], 'AccessPolicyVersion', ARGV[2],
+  'CacheSchema', ARGV[13])
+if ARGV[14] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
+  redis.call('HSET', KEYS[1], 'Quota', ARGV[15])
 end
-redis.call('EXPIRE', KEYS[1], ARGV[12])
+redis.call('EXPIRE', KEYS[1], ARGV[16])
 return 1`
 	result, err := common.RDB.Eval(context.Background(), script,
-		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id)},
-		user.AuthVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
-		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
+		[]string{
+			getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id),
+			getUserAccessPolicyFenceKey(user.Id), getUserAccessPolicyVersionKey(user.Id),
+		},
+		user.AuthVersion, user.AccessPolicyVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
+		user.Username, user.Setting, user.APIIPMode, user.APIIPAllowlist, user.DevicePolicyMode,
+		user.CacheSchema, includeQuotaArg, user.Quota, ttl,
 	).Int()
 	if err != nil {
 		return err
 	}
 	if result == 0 {
 		return ErrUserAuthCachePending
+	}
+	if result == -1 {
+		return ErrUserAccessPolicyCachePending
 	}
 	return nil
 }

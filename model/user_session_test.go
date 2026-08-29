@@ -628,6 +628,27 @@ func TestUserUpdateBumpsAuthVersionOnlyForAuthorizationChanges(t *testing.T) {
 	assert.Equal(t, int64(3), user.AuthVersion)
 }
 
+func TestUserAccessPolicyUpdateDoesNotRevokeLoginSession(t *testing.T) {
+	setupUserSessionTest(t)
+	const userID = 1601
+	createUserSessionTestUser(t, userID, 1)
+	now := time.Now().Unix()
+	session := newTestUserSession("policy-session", userID, now)
+	require.NoError(t, CreateUserSession(session))
+
+	deviceMode := "observe"
+	updated, changed, err := UpdateUserAccessPolicy(userID, UserAccessPolicyPatch{DeviceMode: &deviceMode})
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.EqualValues(t, 1, updated.AuthVersion)
+	assert.EqualValues(t, 2, updated.AccessPolicyVersion)
+
+	storedSession, err := GetUserSessionBySID(session.SID)
+	require.NoError(t, err)
+	assert.Equal(t, UserSessionStatusActive, storedSession.Status)
+	assert.EqualValues(t, 1, storedSession.UserAuthVersion)
+}
+
 func TestPasswordResetBumpsAuthVersionAndRevokesSessions(t *testing.T) {
 	setupUserSessionTest(t)
 	now := time.Now().Unix()
