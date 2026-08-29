@@ -125,3 +125,46 @@ func TestConfigureTrustedProxiesRejectsInvalidConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTrustedProxyRemoteAddrUsesConfiguredNetworks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("TRUSTED_PROXIES", "192.0.2.0/24, 2001:db8::1")
+	router := newClientIPRouter()
+	require.NoError(t, ConfigureTrustedProxies(router))
+
+	testCases := []struct {
+		name       string
+		remoteAddr string
+		trusted    bool
+	}{
+		{name: "trusted IPv4 CIDR", remoteAddr: "192.0.2.10:12345", trusted: true},
+		{name: "trusted IPv4-mapped IPv6", remoteAddr: "[::ffff:192.0.2.10]:12345", trusted: true},
+		{name: "trusted IPv6 address", remoteAddr: "[2001:db8::1]:12345", trusted: true},
+		{name: "untrusted IPv4", remoteAddr: "198.51.100.10:12345", trusted: false},
+		{name: "invalid remote address", remoteAddr: "not-an-address", trusted: false},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.trusted, IsTrustedProxyRemoteAddr(testCase.remoteAddr))
+		})
+	}
+}
+
+func TestIsTrustedProxyRemoteAddrHonorsNoneAndDefaultConfiguration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Run("none", func(t *testing.T) {
+		t.Setenv("TRUSTED_PROXIES", "none")
+		router := newClientIPRouter()
+		require.NoError(t, ConfigureTrustedProxies(router))
+		assert.False(t, IsTrustedProxyRemoteAddr("127.0.0.1:12345"))
+	})
+
+	t.Run("default private networks", func(t *testing.T) {
+		t.Setenv("TRUSTED_PROXIES", "")
+		router := newClientIPRouter()
+		require.NoError(t, ConfigureTrustedProxies(router))
+		assert.True(t, IsTrustedProxyRemoteAddr("10.20.30.40:12345"))
+		assert.False(t, IsTrustedProxyRemoteAddr("198.51.100.10:12345"))
+	})
+}
