@@ -66,6 +66,7 @@ func InitEnv() {
 		log.Fatal(err)
 	}
 	initUserSessionSettings()
+	InitDeviceAccessSettings()
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")
 	}
@@ -134,6 +135,48 @@ func InitEnv() {
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
 	initConstantEnv()
+}
+
+// InitDeviceAccessSettings loads the device access control settings without
+// exposing the configured secret in logs. A short secret remains available for
+// diagnostics but DeviceFingerprintReady keeps device policy activation closed.
+func InitDeviceAccessSettings() {
+	DeviceFingerprintSecret = strings.TrimSpace(os.Getenv("DEVICE_FINGERPRINT_SECRET"))
+	if DeviceFingerprintSecret != "" && len(DeviceFingerprintSecret) < 32 {
+		SysError("DEVICE_FINGERPRINT_SECRET must contain at least 32 characters; device fingerprinting is not ready")
+	}
+
+	DeviceUpgradeGraceHours = boundedDeviceAccessSetting(
+		"DEVICE_UPGRADE_GRACE_HOURS",
+		DefaultDeviceUpgradeGraceHours,
+		0,
+		72,
+	)
+	DeviceActiveNetworkWindowMinutes = boundedDeviceAccessSetting(
+		"DEVICE_ACTIVE_NETWORK_WINDOW_MINUTES",
+		DefaultDeviceActiveNetworkWindowMinutes,
+		1,
+		60,
+	)
+	DeviceProfileRetentionDays = boundedDeviceAccessSetting(
+		"DEVICE_PROFILE_RETENTION_DAYS",
+		DefaultDeviceProfileRetentionDays,
+		30,
+		3650,
+	)
+}
+
+func boundedDeviceAccessSetting(name string, fallback int, minimum int, maximum int) int {
+	value := GetEnvOrDefault(name, fallback)
+	if value < minimum || value > maximum {
+		SysError(fmt.Sprintf("%s is outside the supported range %d..%d, using default value: %d", name, minimum, maximum, fallback))
+		return fallback
+	}
+	return value
+}
+
+func DeviceFingerprintReady() bool {
+	return len(strings.TrimSpace(DeviceFingerprintSecret)) >= 32
 }
 
 func initUserSessionSettings() {

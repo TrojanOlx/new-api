@@ -43,6 +43,9 @@ const (
 	DefaultUserSessionIssuanceWindowSeconds = 24 * 60 * 60
 	DefaultUserSessionRevokedRetentionDays  = 7
 	DefaultUserSessionHourlyAlertThreshold  = 5000
+	DefaultDeviceUpgradeGraceHours          = 48
+	DefaultDeviceActiveNetworkWindowMinutes = 15
+	DefaultDeviceProfileRetentionDays       = 90
 )
 
 var (
@@ -51,6 +54,10 @@ var (
 	UserSessionIssuanceWindowSeconds = int64(DefaultUserSessionIssuanceWindowSeconds)
 	UserSessionRevokedRetentionDays  = DefaultUserSessionRevokedRetentionDays
 	UserSessionHourlyAlertThreshold  = DefaultUserSessionHourlyAlertThreshold
+	DeviceFingerprintSecret          string
+	DeviceUpgradeGraceHours          = DefaultDeviceUpgradeGraceHours
+	DeviceActiveNetworkWindowMinutes = DefaultDeviceActiveNetworkWindowMinutes
+	DeviceProfileRetentionDays       = DefaultDeviceProfileRetentionDays
 )
 
 var OptionMap map[string]string
