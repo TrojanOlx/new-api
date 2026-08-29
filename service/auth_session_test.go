@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -32,7 +33,10 @@ func setupAuthSessionTestDB(t *testing.T) *model.User {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.User{}, &model.UserSession{}, &model.AuthFlow{},
+		&model.UserDevice{}, &model.UserDeviceFingerprint{}, &model.UserDeviceIP{},
+	))
 	model.DB = db
 	common.RedisEnabled = false
 	common.UserSessionActiveLimit = common.DefaultUserSessionActiveLimit
@@ -82,6 +86,33 @@ func useIndependentAuthSessionRedis(t *testing.T) (*miniredis.Miniredis, *redis.
 		common.SyncFrequency = previousSyncFrequency
 	})
 	return serverA, clientA, serverB, clientB
+}
+
+func TestCleanupAuthArtifactsDeletesOnlyStalePendingDevices(t *testing.T) {
+	user := setupAuthSessionTestDB(t)
+	now := time.Now()
+	deviceHash := func(value string) string { return value + strings.Repeat("0", 64-len(value)) }
+	for _, item := range []struct {
+		fingerprint string
+		seenAt      time.Time
+	}{
+		{fingerprint: "stale", seenAt: now.Add(-91 * 24 * time.Hour)},
+		{fingerprint: "recent", seenAt: now.Add(-89 * 24 * time.Hour)},
+	} {
+		_, _, err := model.CreateObservedUserDevice(model.CreateUserDeviceInput{
+			UserId: user.Id, FingerprintHash: deviceHash(item.fingerprint),
+			CompatibilityHash: deviceHash("compat-" + item.fingerprint),
+			Status:            string(constant.UserDevicePending), FirstSeenAt: item.seenAt.Unix(), Now: item.seenAt.Unix(),
+		})
+		require.NoError(t, err)
+	}
+
+	cleanupAuthArtifacts()
+
+	var devices []model.UserDevice
+	require.NoError(t, model.DB.Where("user_id = ?", user.Id).Find(&devices).Error)
+	require.Len(t, devices, 1)
+	assert.Equal(t, deviceHash("compat-recent"), devices[0].CompatibilityHash)
 }
 
 func cachedLoginSessionKey(t *testing.T, server *miniredis.Miniredis) string {

@@ -8,7 +8,10 @@ import (
 	"github.com/QuantumNous/new-api/model"
 )
 
-const authArtifactCleanupInterval = time.Hour
+const (
+	authArtifactCleanupInterval = time.Hour
+	pendingDeviceRetention      = 90 * 24 * time.Hour
+)
 
 // StartAuthArtifactCleanup removes expired dashboard Sessions and old
 // one-time authentication flows. Only the master instance performs cleanup.
@@ -47,5 +50,8 @@ func cleanupAuthArtifacts() {
 	}
 	if err := model.DeleteExpiredAuthFlows(now); err != nil {
 		common.SysError("failed to delete expired authentication flows: " + err.Error())
+	}
+	if err := model.DeleteStalePendingUserDevices(now.Add(-pendingDeviceRetention).Unix()); err != nil {
+		common.SysError("failed to delete stale pending user devices: " + err.Error())
 	}
 }
