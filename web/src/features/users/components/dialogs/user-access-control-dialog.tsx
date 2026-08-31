@@ -53,7 +53,7 @@ export function UserAccessControlDialog(props: UserAccessControlDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-5xl'>
+      <DialogContent className='max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-hidden sm:max-w-5xl'>
         <DialogHeader>
           <DialogTitle>
             {t('Access control for {{username}}', {
@@ -72,7 +72,7 @@ export function UserAccessControlDialog(props: UserAccessControlDialogProps) {
           </TabsList>
           <TabsContent
             value='policy'
-            className='max-h-[calc(100dvh-12rem)] overflow-y-auto pr-1'
+            className='max-h-[calc(100dvh-12rem)] min-w-0 overflow-y-auto pr-1'
           >
             {policyQuery.isLoading && (
               <div
@@ -102,9 +102,14 @@ export function UserAccessControlDialog(props: UserAccessControlDialogProps) {
           </TabsContent>
           <TabsContent
             value='devices'
-            className='max-h-[calc(100dvh-12rem)] overflow-y-auto pr-1'
+            className='max-h-[calc(100dvh-12rem)] min-w-0 overflow-y-auto pr-1'
           >
-            {userId > 0 && <UserDeviceManagement userId={userId} />}
+            {userId > 0 && (
+              <UserDeviceManagement
+                userId={userId}
+                deviceMode={policyQuery.data?.data.device_mode ?? 'off'}
+              />
+            )}
           </TabsContent>
         </Tabs>
       </DialogContent>

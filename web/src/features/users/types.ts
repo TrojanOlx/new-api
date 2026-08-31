@@ -150,6 +150,20 @@ export interface ManageUserQuotaPayload {
 // ============================================================================
 
 const nonNegativeIntegerSchema = z.number().int().nonnegative()
+const userDeviceRateLimitRPMSchema = z.number().int().min(0).max(60_000)
+
+const userDeviceModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => new TextEncoder().encode(value).length <= 128)
+
+export const userDeviceBlockedModelsSchema = z
+  .array(z.string())
+  .transform((models) =>
+    [...new Set(models.map((model) => model.trim()).filter(Boolean))].sort()
+  )
+  .pipe(z.array(userDeviceModelIdSchema).max(128))
 
 export const userIPPolicyModeSchema = z.enum(['unrestricted', 'allowlist'])
 export type UserIPPolicyMode = z.infer<typeof userIPPolicyModeSchema>
@@ -231,11 +245,17 @@ const userDeviceFields = {
   denied_count: nonNegativeIntegerSchema,
   last_client_version: z.string().max(64),
   remark: z.string().max(255),
+  rate_limit_rpm: userDeviceRateLimitRPMSchema,
   created_at: nonNegativeIntegerSchema,
   updated_at: nonNegativeIntegerSchema,
 }
 
-export const userDeviceSchema = z.object(userDeviceFields).strict()
+export const userDeviceSchema = z
+  .object({
+    ...userDeviceFields,
+    blocked_models: userDeviceBlockedModelsSchema,
+  })
+  .strict()
 export type UserDevice = z.infer<typeof userDeviceSchema>
 
 export const userDeviceSummarySchema = z
@@ -243,6 +263,7 @@ export const userDeviceSummarySchema = z
     ...userDeviceFields,
     fingerprint_count: nonNegativeIntegerSchema,
     recent_ip_count: nonNegativeIntegerSchema,
+    blocked_model_count: nonNegativeIntegerSchema,
   })
   .strict()
 export type UserDeviceSummary = z.infer<typeof userDeviceSummarySchema>
@@ -297,6 +318,8 @@ export const userDeviceUpdateSchema = z
   .object({
     status: userDeviceStatusSchema.optional(),
     remark: z.string().max(255).optional(),
+    rate_limit_rpm: userDeviceRateLimitRPMSchema.optional(),
+    blocked_models: userDeviceBlockedModelsSchema.optional(),
   })
   .strict()
 export type UserDeviceUpdate = z.infer<typeof userDeviceUpdateSchema>
@@ -368,6 +391,15 @@ export type GetUserDeviceResponse = UserDeviceDetailApiResponse
 export type UpdateUserAccessPolicyResponse = UserAccessPolicyApiResponse
 export type UpdateUserDeviceResponse = UserDeviceDetailApiResponse
 export type UpdateUserDeviceFingerprintResponse = UserDeviceDetailApiResponse
+
+export const userModelsApiResponseSchema = z
+  .object({
+    success: z.literal(true),
+    message: z.string().optional(),
+    data: z.array(z.string()),
+  })
+  .strict()
+export type UserModelsApiResponse = z.infer<typeof userModelsApiResponseSchema>
 
 // ============================================================================
 // Dialog Types

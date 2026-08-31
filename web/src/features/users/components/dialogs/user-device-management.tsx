@@ -57,7 +57,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { getUserDevices, updateUserDevice } from '../../api'
 import { userAccessPolicyQueryKeys } from '../../lib/access-control-query-keys'
-import type { GetUserDevicesParams } from '../../types'
+import type { GetUserDevicesParams, UserDevicePolicyMode } from '../../types'
 import { UserDeviceDetailPanel } from './user-device-detail'
 
 const DEVICE_PAGE_SIZE = 20
@@ -73,6 +73,7 @@ interface PendingDeviceAction {
 
 interface UserDeviceManagementProps {
   userId: number
+  deviceMode: UserDevicePolicyMode
 }
 
 export function UserDeviceManagement(props: UserDeviceManagementProps) {
@@ -139,6 +140,7 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
       <UserDeviceDetailPanel
         userId={props.userId}
         deviceId={selectedDeviceId}
+        deviceMode={props.deviceMode}
         onBack={() => setSelectedDeviceId(null)}
       />
     )
@@ -213,14 +215,16 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
       {devices.length > 0 && !devicesQuery.isError && (
         <>
           <div aria-label={t('Device table')} className='overflow-x-auto'>
-            <Table className='min-w-[760px] table-fixed'>
+            <Table className='min-w-[920px] table-fixed'>
               <colgroup>
                 <col className='w-16' />
-                <col className='w-40' />
-                <col className='w-32' />
+                <col className='w-36' />
                 <col className='w-28' />
-                <col className='w-40' />
-                <col className='w-44' />
+                <col className='w-24' />
+                <col className='w-36' />
+                <col className='w-20' />
+                <col className='w-28' />
+                <col className='w-36' />
                 <col className='w-16' />
               </colgroup>
               <TableHeader>
@@ -236,6 +240,8 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
                       </span>
                     </div>
                   </TableHead>
+                  <TableHead>{t('RPM')}</TableHead>
+                  <TableHead>{t('Blocked models')}</TableHead>
                   <TableHead>
                     <div className='flex flex-col gap-0.5'>
                       <span>{t('Last IP')}</span>
@@ -300,6 +306,8 @@ export function UserDeviceManagement(props: UserDeviceManagementProps) {
                         </Badge>
                       </div>
                     </TableCell>
+                    <TableCell>{item.rate_limit_rpm}</TableCell>
+                    <TableCell>{item.blocked_model_count}</TableCell>
                     <TableCell>
                       <div className='flex flex-col gap-0.5'>
                         <span className='font-mono text-xs'>

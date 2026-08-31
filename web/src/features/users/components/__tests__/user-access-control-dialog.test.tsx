@@ -87,6 +87,8 @@ const device = {
   updated_at: 1_787_990_100,
   fingerprint_count: 1,
   recent_ip_count: 2,
+  rate_limit_rpm: 120,
+  blocked_model_count: 1,
 }
 
 const detail = {
@@ -108,6 +110,8 @@ const detail = {
     denied_count: device.denied_count,
     last_client_version: device.last_client_version,
     remark: device.remark,
+    rate_limit_rpm: device.rate_limit_rpm,
+    blocked_models: ['gpt-5.6-sol'],
     created_at: device.created_at,
     updated_at: device.updated_at,
   },
@@ -182,6 +186,14 @@ function installApiFixtures(patchCalls: ApiCall[], getCalls?: ApiCall[]): void {
     }
     if (url === '/api/user/7/devices/31') {
       return { data: { success: true, data: detail } }
+    }
+    if (url === '/api/user/7/models') {
+      return {
+        data: {
+          success: true,
+          data: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-4o-mini'],
+        },
+      }
     }
     throw new Error(`Unexpected GET ${url}`)
   }
@@ -593,7 +605,7 @@ describe('UserAccessControlDialog', () => {
     const deviceRow = screen.getByRole('row', { name: /#31/ })
 
     expect(dialog).toHaveClass('sm:max-w-5xl')
-    expect(table).toHaveClass('min-w-[760px]')
+    expect(table).toHaveClass('min-w-[920px]')
     expect(table).not.toHaveClass('min-w-[1280px]')
     expect(within(deviceRow).getByText('203.0.113.11')).toBeInTheDocument()
     expect(within(deviceRow).getByText('IP count: 2')).toBeInTheDocument()
@@ -604,5 +616,20 @@ describe('UserAccessControlDialog', () => {
     expect(
       within(deviceRow).getByRole('button', { name: 'Actions for device 31' })
     ).toBeInTheDocument()
+  })
+
+  test('allows device details to shrink inside the mobile access dialog', async () => {
+    installApiFixtures([])
+    renderDialog()
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Devices' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for device 31' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'View' }))
+    expect(await screen.findByText('Device information')).toBeInTheDocument()
+
+    expect(screen.getByRole('dialog')).toHaveClass('grid-cols-[minmax(0,1fr)]')
+    expect(screen.getByRole('tabpanel')).toHaveClass('min-w-0')
   })
 })

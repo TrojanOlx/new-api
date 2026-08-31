@@ -27,6 +27,7 @@ import {
   userDeviceListApiResponseSchema,
   userDeviceUpdateSchema,
   userAccessPolicyUpdateSchema,
+  userModelsApiResponseSchema,
   type ApiResponse,
   type GetUserDevicesParams,
   type User,
@@ -42,6 +43,7 @@ import {
   type UserDeviceFingerprintUpdate,
   type UserDeviceListApiResponse,
   type UserDeviceUpdate,
+  type UserModelsApiResponse,
 } from './types'
 
 // ============================================================================
@@ -274,6 +276,14 @@ export async function updateUserDeviceFingerprint(
     validatedPayload
   )
   return userDeviceDetailApiResponseSchema.parse(res.data)
+}
+
+/** Get the target user's available model IDs for device-control selection. */
+export async function getUserModels(
+  userId: number
+): Promise<UserModelsApiResponse> {
+  const res = await api.get(`/api/user/${userId}/models`)
+  return userModelsApiResponseSchema.parse(res.data)
 }
 
 // ============================================================================

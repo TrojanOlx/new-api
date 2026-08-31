@@ -23,6 +23,8 @@ export const userAccessPolicyQueryKeys = {
   user: (userId: number) => [...userAccessPolicyQueryKeys.all, userId] as const,
   policy: (userId: number) =>
     [...userAccessPolicyQueryKeys.user(userId), 'access-policy'] as const,
+  models: (userId: number) =>
+    [...userAccessPolicyQueryKeys.user(userId), 'models'] as const,
   trustedDevicePrerequisite: (userId: number) =>
     [...userAccessPolicyQueryKeys.user(userId), 'trusted-device'] as const,
   deviceLists: (userId: number) =>

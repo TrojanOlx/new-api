@@ -61,9 +61,11 @@ import { userAccessPolicyQueryKeys } from '../../lib/access-control-query-keys'
 import type {
   UserDeviceDetail,
   UserDeviceFingerprintUpdateStatus,
+  UserDevicePolicyMode,
   UserDeviceStatus,
   UserDeviceUpdate,
 } from '../../types'
+import { UserDeviceControlsForm } from './user-device-controls-form'
 
 const DEVICE_STATUSES: ReadonlyArray<UserDeviceStatus> = [
   'pending',
@@ -74,6 +76,7 @@ const DEVICE_STATUSES: ReadonlyArray<UserDeviceStatus> = [
 interface UserDeviceDetailPanelProps {
   userId: number
   deviceId: number
+  deviceMode: UserDevicePolicyMode
   onBack: () => void
 }
 
@@ -289,6 +292,13 @@ function LoadedDeviceDetail(props: LoadedDeviceDetailProps) {
           </DetailItem>
         </dl>
       </section>
+
+      <UserDeviceControlsForm
+        userId={props.userId}
+        deviceId={props.deviceId}
+        deviceMode={props.deviceMode}
+        device={props.detail.device}
+      />
 
       <FieldGroup>
         <Field>
@@ -584,11 +594,5 @@ export function UserDeviceDetailPanel(props: UserDeviceDetailPanelProps) {
     )
   }
 
-  return (
-    <LoadedDeviceDetail
-      key={detailQuery.data.data.device.updated_at}
-      {...props}
-      detail={detailQuery.data.data}
-    />
-  )
+  return <LoadedDeviceDetail {...props} detail={detailQuery.data.data} />
 }
