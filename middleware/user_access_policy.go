@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -77,6 +78,13 @@ func enforceUserAPIAccess(c *gin.Context, user *model.UserBase) bool {
 	result := evaluateUserAPIAccessForMiddleware(user, clientIP, metadata, time.Now())
 	switch result.Decision {
 	case service.UserAccessAllow:
+		if result.DeviceId > 0 {
+			c.Set(string(constant.ContextKeyUserDeviceControls), service.UserDeviceRequestControls{
+				DeviceId: result.DeviceId, FingerprintId: result.FingerprintId,
+				RateLimitRPM:  result.RateLimitRPM,
+				BlockedModels: append([]string(nil), result.BlockedModels...),
+			})
+		}
 		if result.Release != nil {
 			canonicalIP := clientIP.Unmap().String()
 			var releaseOnce sync.Once

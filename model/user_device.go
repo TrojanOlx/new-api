@@ -173,6 +173,13 @@ type UserDevicePatch struct {
 	BlockedModels *[]string
 }
 
+type UserDeviceRequestControls struct {
+	DeviceId      int
+	FingerprintId int
+	RateLimitRPM  int
+	BlockedModels []string
+}
+
 type UserDeviceMutation struct {
 	Before          UserDevice
 	After           UserDevice
@@ -327,6 +334,21 @@ func normalizeStoredUserDeviceBlockedModels(encoded string) ([]string, string, e
 		return nil, "", fmt.Errorf("%w: %v", ErrInvalidUserDeviceBlockedModels, err)
 	}
 	return normalizeUserDeviceBlockedModels(models)
+}
+
+func (device UserDevice) RequestControls() (UserDeviceRequestControls, error) {
+	if device.RateLimitRPM < 0 || device.RateLimitRPM > maxUserDeviceRateLimitRPM {
+		return UserDeviceRequestControls{}, ErrInvalidUserDeviceRateLimit
+	}
+	blockedModels, _, err := normalizeStoredUserDeviceBlockedModels(device.BlockedModelsJSON)
+	if err != nil {
+		return UserDeviceRequestControls{}, err
+	}
+	return UserDeviceRequestControls{
+		DeviceId:      device.Id,
+		RateLimitRPM:  device.RateLimitRPM,
+		BlockedModels: blockedModels,
+	}, nil
 }
 
 func userDeviceHasControls(device UserDevice) bool {

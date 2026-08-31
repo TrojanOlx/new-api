@@ -347,3 +347,37 @@ func TestTokenAuthReleasesDeviceActivityWhenLaterTokenValidationFails(t *testing
 		t.Fatal("device activity was not released after token validation failed")
 	}
 }
+
+func TestEnforceUserAPIAccessStoresResolvedDeviceControls(t *testing.T) {
+	previousEvaluate := evaluateUserAPIAccessForMiddleware
+	evaluateUserAPIAccessForMiddleware = func(*model.UserBase, netip.Addr, service.DeviceRequestMetadata, time.Time) service.UserAccessResult {
+		return service.UserAccessResult{
+			Decision:      service.UserAccessAllow,
+			DeviceId:      91,
+			FingerprintId: 92,
+			RateLimitRPM:  30,
+			BlockedModels: []string{"gpt-5.6-sol"},
+		}
+	}
+	t.Cleanup(func() { evaluateUserAPIAccessForMiddleware = previousEvaluate })
+
+	router := gin.New()
+	router.GET("/controls", func(c *gin.Context) {
+		require.True(t, enforceUserAPIAccess(c, &model.UserBase{Id: 90}))
+		value, found := c.Get(string(constant.ContextKeyUserDeviceControls))
+		require.True(t, found)
+		controls, ok := value.(service.UserDeviceRequestControls)
+		require.True(t, ok)
+		assert.Equal(t, 91, controls.DeviceId)
+		assert.Equal(t, 92, controls.FingerprintId)
+		assert.Equal(t, 30, controls.RateLimitRPM)
+		assert.Equal(t, []string{"gpt-5.6-sol"}, controls.BlockedModels)
+		c.Status(http.StatusNoContent)
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/controls", nil)
+	request.RemoteAddr = "192.0.2.90:1234"
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNoContent, response.Code)
+}

@@ -39,12 +39,18 @@ type UserAccessResult struct {
 	Reason        string
 	DeviceId      int
 	FingerprintId int
+	RateLimitRPM  int
+	BlockedModels []string
 	Release       func()
 }
+
+type UserDeviceRequestControls = model.UserDeviceRequestControls
 
 type userDeviceResolution struct {
 	DeviceId                  int
 	FingerprintId             int
+	RateLimitRPM              int
+	BlockedModels             []string
 	DeviceStatus              string
 	FingerprintStatus         string
 	GraceUntil                int64
@@ -118,7 +124,7 @@ func userDeviceDecisionCacheKey(user *model.UserBase, fingerprintHash string) st
 }
 
 func userDeviceDecisionRedisKey(key string) string {
-	return "access:device:decision:v1:" + key
+	return "access:device:decision:v2:" + key
 }
 
 func getUserDeviceDecisionCache(user *model.UserBase, fingerprintHash string, now time.Time) (userDeviceResolution, bool) {
@@ -202,12 +208,17 @@ func setUserDeviceDecisionCache(user *model.UserBase, fingerprintHash string, re
 	}
 }
 
-func userDeviceResolutionFromRows(device *model.UserDevice, fingerprint *model.UserDeviceFingerprint) userDeviceResolution {
+func userDeviceResolutionFromRows(device *model.UserDevice, fingerprint *model.UserDeviceFingerprint) (userDeviceResolution, error) {
+	controls, err := device.RequestControls()
+	if err != nil {
+		return userDeviceResolution{}, err
+	}
 	return userDeviceResolution{
 		DeviceId: device.Id, FingerprintId: fingerprint.Id,
+		RateLimitRPM: controls.RateLimitRPM, BlockedModels: controls.BlockedModels,
 		DeviceStatus: device.Status, FingerprintStatus: fingerprint.Status,
 		GraceUntil: fingerprint.GraceUntil,
-	}
+	}, nil
 }
 
 func trustedUpgradeCandidate(device model.UserDevice, detail *model.UserDeviceDetail, now time.Time) bool {
@@ -228,7 +239,10 @@ func (modelUserAccessBackend) resolve(user *model.UserBase, evidence DeviceFinge
 	}
 	fingerprint, device, err := model.FindUserDeviceFingerprint(user.Id, evidence.FingerprintHash)
 	if err == nil {
-		resolution := userDeviceResolutionFromRows(device, fingerprint)
+		resolution, err := userDeviceResolutionFromRows(device, fingerprint)
+		if err != nil {
+			return userDeviceResolution{}, err
+		}
 		setUserDeviceDecisionCache(user, evidence.FingerprintHash, resolution, now)
 		return resolution, nil
 	}
@@ -284,7 +298,10 @@ func (modelUserAccessBackend) resolve(user *model.UserBase, evidence DeviceFinge
 			FirstSeenAt: now.Unix(), LastSeenAt: now.Unix(),
 		})
 		if err == nil {
-			resolution := userDeviceResolutionFromRows(candidate, fingerprint)
+			resolution, err := userDeviceResolutionFromRows(candidate, fingerprint)
+			if err != nil {
+				return userDeviceResolution{}, err
+			}
 			setUserDeviceDecisionCache(user, evidence.FingerprintHash, resolution, now)
 			return resolution, nil
 		}
@@ -298,7 +315,10 @@ func (modelUserAccessBackend) resolve(user *model.UserBase, evidence DeviceFinge
 		}
 		fingerprint, device, err = model.FindUserDeviceFingerprint(user.Id, evidence.FingerprintHash)
 		if err == nil {
-			resolution := userDeviceResolutionFromRows(device, fingerprint)
+			resolution, err := userDeviceResolutionFromRows(device, fingerprint)
+			if err != nil {
+				return userDeviceResolution{}, err
+			}
 			setUserDeviceDecisionCache(user, evidence.FingerprintHash, resolution, now)
 			return resolution, nil
 		}
@@ -324,7 +344,10 @@ func (modelUserAccessBackend) resolve(user *model.UserBase, evidence DeviceFinge
 	if err != nil {
 		return userDeviceResolution{}, err
 	}
-	resolution := userDeviceResolutionFromRows(device, fingerprint)
+	resolution, err := userDeviceResolutionFromRows(device, fingerprint)
+	if err != nil {
+		return userDeviceResolution{}, err
+	}
 	resolution.InitialObservationCounted = true
 	setUserDeviceDecisionCache(user, evidence.FingerprintHash, resolution, now)
 	return resolution, nil
@@ -397,6 +420,7 @@ func userDeviceDeniedResult(backend userAccessPolicyBackend, user *model.UserBas
 	return UserAccessResult{
 		Decision: UserAccessDenyDevice, Reason: reason,
 		DeviceId: resolution.DeviceId, FingerprintId: resolution.FingerprintId,
+		RateLimitRPM: resolution.RateLimitRPM, BlockedModels: resolution.BlockedModels,
 	}
 }
 
@@ -414,6 +438,9 @@ func EvaluateUserAPIAccess(user *model.UserBase, clientIP netip.Addr, meta Devic
 
 	mode := constant.UserDevicePolicyMode(user.DevicePolicyMode)
 	if mode == constant.UserDevicePolicyOff {
+		if user.DeviceControlsEnabled {
+			return UserAccessResult{Decision: UserAccessUnavailable, Reason: "access_control_unavailable"}
+		}
 		return UserAccessResult{Decision: UserAccessAllow}
 	}
 	if !constant.IsValidUserDevicePolicyMode(user.DevicePolicyMode) {
@@ -422,6 +449,9 @@ func EvaluateUserAPIAccess(user *model.UserBase, clientIP netip.Addr, meta Devic
 
 	evidence, err := buildDeviceFingerprintForAccess(meta)
 	if err != nil {
+		if user.DeviceControlsEnabled {
+			return UserAccessResult{Decision: UserAccessUnavailable, Reason: "access_control_unavailable"}
+		}
 		if mode == constant.UserDevicePolicyAllowlist {
 			return UserAccessResult{Decision: UserAccessUnavailable, Reason: "device_fingerprint_unavailable"}
 		}
@@ -433,6 +463,9 @@ func EvaluateUserAPIAccess(user *model.UserBase, clientIP netip.Addr, meta Devic
 	ipHash := common.GenerateHMACWithKey([]byte("device-ip-v1:"+common.DeviceFingerprintSecret), canonicalIP)
 	resolution, err := userAccessBackendForAccess.resolve(user, evidence, ipHash, canonicalIP, now)
 	if err != nil {
+		if user.DeviceControlsEnabled {
+			return UserAccessResult{Decision: UserAccessUnavailable, Reason: "access_control_unavailable"}
+		}
 		if mode == constant.UserDevicePolicyAllowlist {
 			return UserAccessResult{Decision: UserAccessUnavailable, Reason: "device_policy_unavailable"}
 		}
@@ -486,6 +519,7 @@ func EvaluateUserAPIAccess(user *model.UserBase, clientIP netip.Addr, meta Devic
 		return UserAccessResult{
 			Decision: UserAccessDenyNetwork, Reason: "device_network_conflict",
 			DeviceId: resolution.DeviceId, FingerprintId: resolution.FingerprintId,
+			RateLimitRPM: resolution.RateLimitRPM, BlockedModels: resolution.BlockedModels,
 		}
 	}
 
@@ -498,6 +532,7 @@ func EvaluateUserAPIAccess(user *model.UserBase, clientIP netip.Addr, meta Devic
 	}
 	return UserAccessResult{
 		Decision: UserAccessAllow, DeviceId: resolution.DeviceId,
-		FingerprintId: resolution.FingerprintId, Release: release,
+		FingerprintId: resolution.FingerprintId, RateLimitRPM: resolution.RateLimitRPM,
+		BlockedModels: resolution.BlockedModels, Release: release,
 	}
 }
