@@ -179,7 +179,8 @@ func UpdateUserAccessPolicy(c *gin.Context) {
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			status = http.StatusNotFound
 		case errors.Is(err, common.ErrUserIPAllowlistEmpty),
-			errors.Is(err, model.ErrUserDeviceAllowlistTrustedDeviceRequired):
+			errors.Is(err, model.ErrUserDeviceAllowlistTrustedDeviceRequired),
+			errors.Is(err, model.ErrUserDeviceControlsMustBeCleared):
 			status = http.StatusBadRequest
 		}
 		writeUserAccessControllerError(c, status, err)

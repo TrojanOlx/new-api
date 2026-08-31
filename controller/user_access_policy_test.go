@@ -256,6 +256,25 @@ func TestUpdateUserAccessPolicyRejectsDeviceAllowlistWhenFingerprintSecretIsUnav
 	assert.Equal(t, "access_control_unavailable", decodeUserAccessPolicyTestEnvelope(t, response).Code)
 }
 
+func TestUpdateUserAccessPolicyRejectsTurningDeviceModeOffWithActiveControls(t *testing.T) {
+	fixture := setupUserAccessPolicyControllerTest(t)
+	require.NoError(t, fixture.db.Model(&model.User{}).Where("id = ?", fixture.user.Id).Updates(map[string]any{
+		"device_policy_mode":      string(constant.UserDevicePolicyObserve),
+		"device_controls_enabled": true,
+	}).Error)
+	require.NoError(t, fixture.db.Create(&model.UserDevice{
+		UserId: fixture.user.Id, Status: string(constant.UserDevicePending),
+		CompatibilityHash: "controls-before-off", RateLimitRPM: 30, BlockedModelsJSON: "[]",
+	}).Error)
+
+	path := "/api/user/" + strconv.Itoa(fixture.user.Id) + "/access-policy"
+	response := userAccessPolicyTestRequest(t, fixture.router, http.MethodPatch, path, fixture.root, map[string]any{
+		"device_mode": string(constant.UserDevicePolicyOff),
+	})
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+}
+
 func TestUserAccessPolicyCommittedCacheFailureReturnsUnavailableAndAudits(t *testing.T) {
 	fixture := setupUserAccessPolicyControllerTest(t)
 	previous := updateUserAccessPolicyForAdmin
