@@ -258,13 +258,22 @@ func updateUserAccessPolicy(userId int, patch UserAccessPolicyPatch, validateDev
 				return ErrUserDeviceAllowlistTrustedDeviceRequired
 			}
 		}
+		controlsEnabled, err := userHasDeviceControlsWithTx(tx, userId)
+		if err != nil {
+			return err
+		}
+		if deviceMode == string(constant.UserDevicePolicyOff) && controlsEnabled {
+			return ErrUserDeviceControlsMustBeCleared
+		}
 
-		mutation.Changed = ipMode != currentIPMode || allowlistJSON != currentAllowlistJSON || deviceMode != currentDeviceMode
+		derivedControlsChanged := controlsEnabled != current.DeviceControlsEnabled
+		mutation.Changed = ipMode != currentIPMode || allowlistJSON != currentAllowlistJSON || deviceMode != currentDeviceMode || derivedControlsChanged
 		if !mutation.Changed {
 			mutation.After = current
 			mutation.After.APIIPMode = ipMode
 			mutation.After.APIIPAllowlist = allowlistJSON
 			mutation.After.DevicePolicyMode = deviceMode
+			mutation.After.DeviceControlsEnabled = controlsEnabled
 			if mutation.After.AccessPolicyVersion < 1 {
 				mutation.After.AccessPolicyVersion = 1
 			}
@@ -276,9 +285,10 @@ func updateUserAccessPolicy(userId int, patch UserAccessPolicyPatch, validateDev
 			return err
 		}
 		if err := tx.Model(&User{}).Where("id = ?", userId).Updates(map[string]interface{}{
-			"api_ip_mode":        ipMode,
-			"api_ip_allowlist":   allowlistJSON,
-			"device_policy_mode": deviceMode,
+			"api_ip_mode":             ipMode,
+			"api_ip_allowlist":        allowlistJSON,
+			"device_policy_mode":      deviceMode,
+			"device_controls_enabled": controlsEnabled,
 		}).Error; err != nil {
 			return err
 		}

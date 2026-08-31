@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,9 @@ const (
 	maxUserDeviceIPs           = 256
 	recentUserDeviceIPs        = 10
 	stalePendingDeviceLifetime = 90 * 24 * time.Hour
+	maxUserDeviceRateLimitRPM  = 60000
+	maxUserDeviceBlockedModels = 128
+	maxUserDeviceModelIDBytes  = 128
 )
 
 var (
@@ -27,6 +31,10 @@ var (
 	ErrUserDeviceFingerprintConflict      = errors.New("user device fingerprint belongs to another device")
 	ErrInvalidUserDeviceStatus            = errors.New("invalid user device status")
 	ErrInvalidUserDeviceFingerprintStatus = errors.New("invalid user device fingerprint status")
+	ErrInvalidUserDeviceRateLimit         = errors.New("invalid user device rate limit")
+	ErrInvalidUserDeviceBlockedModels     = errors.New("invalid user device blocked models")
+	ErrUserDeviceControlsRequirePolicy    = errors.New("device controls require device policy tracking")
+	ErrUserDeviceControlsMustBeCleared    = errors.New("device controls must be cleared before disabling device policy")
 )
 
 // UserDevice is a durable logical device profile. Hashes are deliberately not
@@ -50,6 +58,8 @@ type UserDevice struct {
 	DeniedCount       int64  `json:"denied_count" gorm:"type:bigint"`
 	LastClientVersion string `json:"last_client_version" gorm:"type:varchar(64)"`
 	Remark            string `json:"remark" gorm:"type:varchar(255)"`
+	RateLimitRPM      int    `json:"rate_limit_rpm" gorm:"column:rate_limit_rpm"`
+	BlockedModelsJSON string `json:"-" gorm:"type:text;column:blocked_models"`
 	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }
@@ -157,16 +167,19 @@ type AttachFingerprintInput struct {
 // UserDevicePatch contains only administrator-editable fields. Pointer
 // fields preserve PATCH omission semantics.
 type UserDevicePatch struct {
-	Status *string
-	Remark *string
+	Status        *string
+	Remark        *string
+	RateLimitRPM  *int
+	BlockedModels *[]string
 }
 
 type UserDeviceMutation struct {
-	Before        UserDevice
-	After         UserDevice
-	Changed       bool
-	StatusChanged bool
-	RemarkChanged bool
+	Before          UserDevice
+	After           UserDevice
+	Changed         bool
+	StatusChanged   bool
+	RemarkChanged   bool
+	ControlsChanged bool
 }
 
 type UserDeviceFingerprintMutation struct {
@@ -275,6 +288,118 @@ func normalizeObservationTimes(now, firstSeen int64) (int64, int64) {
 		firstSeen = now
 	}
 	return now, firstSeen
+}
+
+func normalizeUserDeviceBlockedModels(models []string) ([]string, string, error) {
+	seen := make(map[string]struct{}, len(models))
+	normalized := make([]string, 0, len(models))
+	for _, modelID := range models {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		if len(modelID) > maxUserDeviceModelIDBytes {
+			return nil, "", ErrInvalidUserDeviceBlockedModels
+		}
+		if _, exists := seen[modelID]; exists {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		normalized = append(normalized, modelID)
+	}
+	if len(normalized) > maxUserDeviceBlockedModels {
+		return nil, "", ErrInvalidUserDeviceBlockedModels
+	}
+	sort.Strings(normalized)
+	encoded, err := common.Marshal(normalized)
+	if err != nil {
+		return nil, "", err
+	}
+	return normalized, string(encoded), nil
+}
+
+func normalizeStoredUserDeviceBlockedModels(encoded string) ([]string, string, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return normalizeUserDeviceBlockedModels(nil)
+	}
+	var models []string
+	if err := common.Unmarshal([]byte(encoded), &models); err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrInvalidUserDeviceBlockedModels, err)
+	}
+	return normalizeUserDeviceBlockedModels(models)
+}
+
+func userDeviceHasControls(device UserDevice) bool {
+	if device.RateLimitRPM != 0 {
+		return true
+	}
+	blockedModels := strings.TrimSpace(device.BlockedModelsJSON)
+	return blockedModels != "" && blockedModels != "[]" && blockedModels != "null"
+}
+
+func userHasDeviceControlsWithTx(tx *gorm.DB, userId int) (bool, error) {
+	var devices []UserDevice
+	if err := tx.Select("rate_limit_rpm", "blocked_models").Where("user_id = ?", userId).Find(&devices).Error; err != nil {
+		return false, err
+	}
+	for _, device := range devices {
+		if userDeviceHasControls(device) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func InitializeUserDeviceControls() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&UserDevice{}).
+			Where("blocked_models IS NULL OR blocked_models = ? OR blocked_models = ?", "", "null").
+			Update("blocked_models", "[]").Error; err != nil {
+			return err
+		}
+
+		var devices []UserDevice
+		if err := tx.Select("id", "user_id", "rate_limit_rpm", "blocked_models").
+			Where("rate_limit_rpm <> ? OR (blocked_models IS NOT NULL AND blocked_models <> ? AND blocked_models <> ?)", 0, "", "[]").
+			Find(&devices).Error; err != nil {
+			return err
+		}
+		enabledSet := make(map[int]struct{})
+		for i := range devices {
+			device := &devices[i]
+			_, normalizedJSON, err := normalizeStoredUserDeviceBlockedModels(device.BlockedModelsJSON)
+			if err != nil {
+				return fmt.Errorf("user device %d has invalid blocked models: %w", device.Id, err)
+			}
+			if strings.TrimSpace(device.BlockedModelsJSON) != normalizedJSON {
+				if err := tx.Model(&UserDevice{}).Where("id = ? AND user_id = ?", device.Id, device.UserId).
+					Update("blocked_models", normalizedJSON).Error; err != nil {
+					return err
+				}
+				device.BlockedModelsJSON = normalizedJSON
+			}
+			if userDeviceHasControls(*device) {
+				enabledSet[device.UserId] = struct{}{}
+			}
+		}
+		enabledUserIDs := make([]int, 0, len(enabledSet))
+		for userId := range enabledSet {
+			enabledUserIDs = append(enabledUserIDs, userId)
+		}
+		disable := tx.Model(&User{}).Where("device_controls_enabled = ?", true)
+		if len(enabledUserIDs) > 0 {
+			disable = disable.Where("id NOT IN ?", enabledUserIDs)
+		}
+		if err := disable.Update("device_controls_enabled", false).Error; err != nil {
+			return err
+		}
+		if len(enabledUserIDs) == 0 {
+			return nil
+		}
+		return tx.Model(&User{}).
+			Where("id IN ? AND device_controls_enabled = ?", enabledUserIDs, false).
+			Update("device_controls_enabled", true).Error
+	})
 }
 
 func setFingerprintShortID(fingerprint *UserDeviceFingerprint) {
@@ -551,6 +676,7 @@ func createObservedUserDeviceOnce(input CreateUserDeviceInput) (*UserDevice, *Us
 			Confidence: input.Confidence, FirstSeenAt: firstSeenAt, LastSeenAt: now,
 			FirstIP: input.IP, LastIP: input.IP, RequestCount: input.RequestCount,
 			DeniedCount: input.DeniedCount, LastClientVersion: input.ClientVersion,
+			BlockedModelsJSON: "[]",
 		}
 		if device.RequestCount == 0 {
 			device.RequestCount = 1
@@ -840,10 +966,25 @@ func UpdateUserDeviceWithSnapshot(userId int, deviceId int, patch UserDevicePatc
 	if patch.Remark != nil && utf8.RuneCountInString(*patch.Remark) > 255 {
 		return nil, errors.New("device remark is too long")
 	}
+	if patch.RateLimitRPM != nil && (*patch.RateLimitRPM < 0 || *patch.RateLimitRPM > maxUserDeviceRateLimitRPM) {
+		return nil, ErrInvalidUserDeviceRateLimit
+	}
+	var normalizedBlockedModelsJSON *string
+	if patch.BlockedModels != nil {
+		_, encoded, err := normalizeUserDeviceBlockedModels(*patch.BlockedModels)
+		if err != nil {
+			return nil, err
+		}
+		normalizedBlockedModelsJSON = &encoded
+	}
 	mutation := &UserDeviceMutation{}
 	var versionChanged bool
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockUserDeviceOwnerWithTx(tx, userId); err != nil {
+			return err
+		}
+		var owner User
+		if err := tx.Unscoped().Select("id", "device_policy_mode", "device_controls_enabled").Where("id = ?", userId).First(&owner).Error; err != nil {
 			return err
 		}
 		device, err := findUserDeviceWithTx(tx, userId, deviceId)
@@ -856,6 +997,34 @@ func UpdateUserDeviceWithSnapshot(userId int, deviceId int, patch UserDevicePatc
 			mutation.RemarkChanged = *patch.Remark != device.Remark
 			if mutation.RemarkChanged {
 				updates["remark"] = *patch.Remark
+			}
+		}
+		newRateLimitRPM := device.RateLimitRPM
+		if patch.RateLimitRPM != nil {
+			newRateLimitRPM = *patch.RateLimitRPM
+			if newRateLimitRPM != device.RateLimitRPM {
+				mutation.ControlsChanged = true
+				updates["rate_limit_rpm"] = newRateLimitRPM
+			}
+		}
+		newBlockedModelsJSON := device.BlockedModelsJSON
+		if normalizedBlockedModelsJSON != nil {
+			_, currentBlockedModelsJSON, normalizeErr := normalizeStoredUserDeviceBlockedModels(device.BlockedModelsJSON)
+			newBlockedModelsJSON = *normalizedBlockedModelsJSON
+			if normalizeErr != nil || newBlockedModelsJSON != currentBlockedModelsJSON {
+				mutation.ControlsChanged = true
+			}
+			if strings.TrimSpace(device.BlockedModelsJSON) != newBlockedModelsJSON {
+				updates["blocked_models"] = newBlockedModelsJSON
+			}
+		}
+		if mutation.ControlsChanged && (newRateLimitRPM > 0 || userDeviceHasControls(UserDevice{BlockedModelsJSON: newBlockedModelsJSON})) {
+			deviceMode := owner.DevicePolicyMode
+			if deviceMode == "" {
+				deviceMode = string(constant.UserDevicePolicyOff)
+			}
+			if deviceMode == string(constant.UserDevicePolicyOff) {
+				return ErrUserDeviceControlsRequirePolicy
 			}
 		}
 		newStatus := device.Status
@@ -885,13 +1054,26 @@ func UpdateUserDeviceWithSnapshot(userId int, deviceId int, patch UserDevicePatc
 			}
 			aliasChanged = result.RowsAffected > 0
 		}
-		mutation.Changed = mutation.StatusChanged || mutation.RemarkChanged
+		mutation.Changed = mutation.StatusChanged || mutation.RemarkChanged || mutation.ControlsChanged
 		mutation.After = mutation.Before
 		mutation.After.Status = newStatus
 		if patch.Remark != nil {
 			mutation.After.Remark = *patch.Remark
 		}
-		versionChanged = mutation.StatusChanged || aliasChanged
+		mutation.After.RateLimitRPM = newRateLimitRPM
+		mutation.After.BlockedModelsJSON = newBlockedModelsJSON
+		if mutation.ControlsChanged {
+			controlsEnabled, err := userHasDeviceControlsWithTx(tx, userId)
+			if err != nil {
+				return err
+			}
+			if controlsEnabled != owner.DeviceControlsEnabled {
+				if err := tx.Unscoped().Model(&User{}).Where("id = ?", userId).Update("device_controls_enabled", controlsEnabled).Error; err != nil {
+					return err
+				}
+			}
+		}
+		versionChanged = mutation.StatusChanged || aliasChanged || mutation.ControlsChanged
 		if !versionChanged {
 			return nil
 		}
@@ -984,6 +1166,22 @@ func DeleteStalePendingUserDevices(before int64) error {
 			return err
 		}
 		for _, device := range stale {
+			if err := lockUserDeviceOwnerWithTx(tx, device.UserId); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return err
+			}
+			current, err := findUserDeviceWithTx(tx, device.UserId, device.Id)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return err
+			}
+			if current.Status != string(constant.UserDevicePending) || current.LastSeenAt >= before || userDeviceHasControls(*current) {
+				continue
+			}
 			if err := tx.Unscoped().Where("user_id = ? AND device_id = ?", device.UserId, device.Id).Delete(&UserDeviceFingerprint{}).Error; err != nil {
 				return err
 			}

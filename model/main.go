@@ -374,6 +374,9 @@ func migrateDB() error {
 	if err := InitializeUserAccessPolicyVersions(); err != nil {
 		return err
 	}
+	if err := InitializeUserDeviceControls(); err != nil {
+		return err
+	}
 	if err := InitializeExternalIdentityClaims(); err != nil {
 		return err
 	}

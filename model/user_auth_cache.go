@@ -97,7 +97,7 @@ end
 if access_pending > 0 and access_pending <= incoming_access then
   redis.call('DEL', KEYS[4])
 end
-if ARGV[14] == '0' and redis.call('EXISTS', KEYS[1]) == 0 then
+if ARGV[15] == '0' and redis.call('EXISTS', KEYS[1]) == 0 then
   return 1
 end
 redis.call('HSET', KEYS[1],
@@ -105,12 +105,12 @@ redis.call('HSET', KEYS[1],
   'Status', ARGV[6], 'Role', ARGV[7], 'Username', ARGV[8],
   'Setting', ARGV[9], 'AuthVersion', ARGV[1],
   'APIIPMode', ARGV[10], 'APIIPAllowlist', ARGV[11],
-  'DevicePolicyMode', ARGV[12], 'AccessPolicyVersion', ARGV[2],
-  'CacheSchema', ARGV[13])
-if ARGV[14] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
-  redis.call('HSET', KEYS[1], 'Quota', ARGV[15])
+  'DevicePolicyMode', ARGV[12], 'DeviceControlsEnabled', ARGV[13],
+  'AccessPolicyVersion', ARGV[2], 'CacheSchema', ARGV[14])
+if ARGV[15] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
+  redis.call('HSET', KEYS[1], 'Quota', ARGV[16])
 end
-redis.call('EXPIRE', KEYS[1], ARGV[16])
+redis.call('EXPIRE', KEYS[1], ARGV[17])
 return 1`
 	result, err := common.RDB.Eval(context.Background(), script,
 		[]string{
@@ -119,7 +119,7 @@ return 1`
 		},
 		user.AuthVersion, user.AccessPolicyVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
 		user.Username, user.Setting, user.APIIPMode, user.APIIPAllowlist, user.DevicePolicyMode,
-		user.CacheSchema, includeQuotaArg, user.Quota, ttl,
+		user.DeviceControlsEnabled, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
 	).Int()
 	if err != nil {
 		return err

@@ -522,6 +522,9 @@ func TestUserDeviceConfiguredDatabases(t *testing.T) {
 			})
 
 			require.NoError(t, db.AutoMigrate(&User{}, &UserDevice{}, &UserDeviceFingerprint{}, &UserDeviceIP{}))
+			assert.True(t, db.Migrator().HasColumn(&User{}, "device_controls_enabled"))
+			assert.True(t, db.Migrator().HasColumn(&UserDevice{}, "rate_limit_rpm"))
+			assert.True(t, db.Migrator().HasColumn(&UserDevice{}, "blocked_models"))
 			username := fmt.Sprintf("cross-%d", time.Now().UnixNano()%1000000000)
 			user := createDeviceTestUser(t, username)
 			device, fingerprint, err := CreateObservedUserDevice(observedDeviceInput(user.Id, "cross-db", time.Now().Unix()))
@@ -540,6 +543,26 @@ func TestUserDeviceConfiguredDatabases(t *testing.T) {
 			count, err := CountAllowedTrustedDevices(user.Id)
 			require.NoError(t, err)
 			assert.EqualValues(t, 1, count)
+
+			require.NoError(t, db.Model(&User{}).Where("id = ?", user.Id).
+				Update("device_policy_mode", string(constant.UserDevicePolicyObserve)).Error)
+			rpm := 60
+			blockedModels := []string{" gpt-5.6-terra ", "gpt-5.6-sol", "gpt-5.6-sol"}
+			mutation, err := UpdateUserDeviceWithSnapshot(user.Id, device.Id, UserDevicePatch{
+				RateLimitRPM:  &rpm,
+				BlockedModels: &blockedModels,
+			})
+			require.NoError(t, err)
+			assert.True(t, mutation.ControlsChanged)
+			require.NoError(t, InitializeUserDeviceControls())
+			require.NoError(t, InitializeUserDeviceControls())
+			var controlledDevice UserDevice
+			require.NoError(t, db.First(&controlledDevice, device.Id).Error)
+			assert.Equal(t, 60, controlledDevice.RateLimitRPM)
+			assert.JSONEq(t, `["gpt-5.6-sol","gpt-5.6-terra"]`, controlledDevice.BlockedModelsJSON)
+			var controlledUser User
+			require.NoError(t, db.First(&controlledUser, user.Id).Error)
+			assert.True(t, controlledUser.DeviceControlsEnabled)
 
 			const attempts = 4
 			raceInput := observedDeviceInput(user.Id, "cross-db-race", time.Now().Unix())
