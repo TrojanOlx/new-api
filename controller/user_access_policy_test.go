@@ -83,6 +83,7 @@ func setupUserAccessPolicyControllerTest(t *testing.T) userAccessPolicyTestFixtu
 	adminRoute.Use(middleware.AdminAuth())
 	adminRoute.GET("/:id/access-policy", GetUserAccessPolicy)
 	adminRoute.PATCH("/:id/access-policy", UpdateUserAccessPolicy)
+	adminRoute.GET("/:id/models", GetUserModels)
 	adminRoute.GET("/:id/devices", ListUserDevices)
 	adminRoute.GET("/:id/devices/:device_id", GetUserDevice)
 	adminRoute.PATCH("/:id/devices/:device_id", UpdateUserDevice)
@@ -171,6 +172,7 @@ func TestUserAccessPolicyRoutesEnforceAuthenticationAndTargetRole(t *testing.T) 
 	}{
 		{method: http.MethodGet, path: path},
 		{method: http.MethodPatch, path: path, body: map[string]any{}},
+		{method: http.MethodGet, path: "/api/user/" + strconv.Itoa(fixture.user.Id) + "/models"},
 		{method: http.MethodGet, path: "/api/user/" + strconv.Itoa(fixture.user.Id) + "/devices"},
 		{method: http.MethodGet, path: devicePath},
 		{method: http.MethodPatch, path: devicePath, body: map[string]any{}},
@@ -466,9 +468,9 @@ func TestBuildSelfUserDataExcludesAdministratorAccessControlFields(t *testing.T)
 	data := buildSelfUserData(&model.User{
 		Id: 1, Username: "self-user", Role: common.RoleCommonUser,
 		APIIPMode: "allowlist", APIIPAllowlist: `["203.0.113.10"]`,
-		DevicePolicyMode: "allowlist", AccessPolicyVersion: 9,
+		DevicePolicyMode: "allowlist", DeviceControlsEnabled: true, AccessPolicyVersion: 9,
 	})
-	for _, field := range []string{"api_ip_mode", "api_ip_allowlist", "device_policy_mode", "access_policy_version"} {
+	for _, field := range []string{"api_ip_mode", "api_ip_allowlist", "device_policy_mode", "device_controls_enabled", "access_policy_version"} {
 		_, present := data[field]
 		assert.False(t, present, "self DTO exposed %s", field)
 	}

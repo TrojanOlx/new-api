@@ -40,28 +40,29 @@ var (
 // UserDevice is a durable logical device profile. Hashes are deliberately not
 // serialized; administrator DTOs should expose only short aliases.
 type UserDevice struct {
-	Id                int    `json:"id" gorm:"primaryKey"`
-	UserId            int    `json:"user_id" gorm:"index:idx_user_device_user_status,priority:1"`
-	Status            string `json:"status" gorm:"type:varchar(16);index:idx_user_device_user_status,priority:2"`
-	CompatibilityHash string `json:"-" gorm:"type:char(64);index:idx_user_device_compatibility"`
-	ClientFamily      string `json:"client_family" gorm:"type:varchar(64)"`
-	OSFamily          string `json:"os_family" gorm:"type:varchar(32)"`
-	Architecture      string `json:"architecture" gorm:"type:varchar(32)"`
-	Originator        string `json:"originator" gorm:"type:varchar(64)"`
-	Confidence        string `json:"confidence" gorm:"type:varchar(16)"`
-	FirstSeenAt       int64  `json:"first_seen_at"`
-	LastSeenAt        int64  `json:"last_seen_at" gorm:"index"`
-	FirstIP           string `json:"first_ip" gorm:"type:varchar(45)"`
-	LastIP            string `json:"last_ip" gorm:"type:varchar(45)"`
-	ObservedIPCount   int    `json:"observed_ip_count"`
-	RequestCount      int64  `json:"request_count" gorm:"type:bigint"`
-	DeniedCount       int64  `json:"denied_count" gorm:"type:bigint"`
-	LastClientVersion string `json:"last_client_version" gorm:"type:varchar(64)"`
-	Remark            string `json:"remark" gorm:"type:varchar(255)"`
-	RateLimitRPM      int    `json:"rate_limit_rpm" gorm:"column:rate_limit_rpm"`
-	BlockedModelsJSON string `json:"-" gorm:"type:text;column:blocked_models"`
-	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	Id                int      `json:"id" gorm:"primaryKey"`
+	UserId            int      `json:"user_id" gorm:"index:idx_user_device_user_status,priority:1"`
+	Status            string   `json:"status" gorm:"type:varchar(16);index:idx_user_device_user_status,priority:2"`
+	CompatibilityHash string   `json:"-" gorm:"type:char(64);index:idx_user_device_compatibility"`
+	ClientFamily      string   `json:"client_family" gorm:"type:varchar(64)"`
+	OSFamily          string   `json:"os_family" gorm:"type:varchar(32)"`
+	Architecture      string   `json:"architecture" gorm:"type:varchar(32)"`
+	Originator        string   `json:"originator" gorm:"type:varchar(64)"`
+	Confidence        string   `json:"confidence" gorm:"type:varchar(16)"`
+	FirstSeenAt       int64    `json:"first_seen_at"`
+	LastSeenAt        int64    `json:"last_seen_at" gorm:"index"`
+	FirstIP           string   `json:"first_ip" gorm:"type:varchar(45)"`
+	LastIP            string   `json:"last_ip" gorm:"type:varchar(45)"`
+	ObservedIPCount   int      `json:"observed_ip_count"`
+	RequestCount      int64    `json:"request_count" gorm:"type:bigint"`
+	DeniedCount       int64    `json:"denied_count" gorm:"type:bigint"`
+	LastClientVersion string   `json:"last_client_version" gorm:"type:varchar(64)"`
+	Remark            string   `json:"remark" gorm:"type:varchar(255)"`
+	RateLimitRPM      int      `json:"rate_limit_rpm" gorm:"column:rate_limit_rpm"`
+	BlockedModelsJSON string   `json:"-" gorm:"type:text;column:blocked_models"`
+	BlockedModels     []string `json:"blocked_models" gorm:"-:all"`
+	CreatedAt         int64    `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt         int64    `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 func (UserDevice) TableName() string {
@@ -219,6 +220,8 @@ type UserDeviceSummary struct {
 	UpdatedAt         int64  `json:"updated_at"`
 	FingerprintCount  int64  `json:"fingerprint_count"`
 	RecentIPCount     int64  `json:"recent_ip_count"`
+	RateLimitRPM      int    `json:"rate_limit_rpm"`
+	BlockedModelCount int    `json:"blocked_model_count"`
 }
 
 // UserDeviceQuery describes the user-scoped list query used by the model
@@ -858,7 +861,7 @@ func AttachUserDeviceFingerprint(input AttachFingerprintInput) (*UserDeviceFinge
 	return result, err
 }
 
-func toUserDeviceSummary(device UserDevice, fingerprintCount, recentIPCount int64) UserDeviceSummary {
+func toUserDeviceSummary(device UserDevice, fingerprintCount, recentIPCount int64, blockedModelCount int) UserDeviceSummary {
 	return UserDeviceSummary{
 		Id: device.Id, UserId: device.UserId, Status: device.Status, ClientFamily: device.ClientFamily,
 		OSFamily: device.OSFamily, Architecture: device.Architecture, Originator: device.Originator,
@@ -868,6 +871,7 @@ func toUserDeviceSummary(device UserDevice, fingerprintCount, recentIPCount int6
 		LastClientVersion: device.LastClientVersion, Remark: device.Remark,
 		CreatedAt: device.CreatedAt, UpdatedAt: device.UpdatedAt,
 		FingerprintCount: fingerprintCount, RecentIPCount: recentIPCount,
+		RateLimitRPM: device.RateLimitRPM, BlockedModelCount: blockedModelCount,
 	}
 }
 
@@ -944,7 +948,13 @@ func ListUserDevices(userId int, status string, page *common.PageInfo) ([]UserDe
 	}
 	summaries := make([]UserDeviceSummary, 0, len(devices))
 	for _, device := range devices {
-		summaries = append(summaries, toUserDeviceSummary(device, fingerprintCounts[device.Id], recentIPCounts[device.Id]))
+		controls, err := device.RequestControls()
+		if err != nil {
+			return nil, 0, err
+		}
+		summaries = append(summaries, toUserDeviceSummary(
+			device, fingerprintCounts[device.Id], recentIPCounts[device.Id], len(controls.BlockedModels),
+		))
 	}
 	return summaries, total, nil
 }
@@ -958,6 +968,11 @@ func GetUserDeviceDetail(userId int, deviceId int) (*UserDeviceDetail, error) {
 	if err := DB.Where("user_id = ? AND id = ?", userId, deviceId).First(&device).Error; err != nil {
 		return nil, err
 	}
+	controls, err := device.RequestControls()
+	if err != nil {
+		return nil, err
+	}
+	device.BlockedModels = controls.BlockedModels
 	fingerprints := make([]UserDeviceFingerprint, 0)
 	if err := DB.Where("user_id = ? AND device_id = ?", userId, deviceId).Order("id ASC").Find(&fingerprints).Error; err != nil {
 		return nil, err

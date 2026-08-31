@@ -659,16 +659,22 @@ func generateDefaultSidebarConfig(userRole int) string {
 }
 
 func GetUserModels(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		id = c.GetInt("id")
+	userGroup := ""
+	if c.Param("id") == "" {
+		user, err := model.GetUserCache(c.GetInt("id"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		userGroup = user.Group
+	} else {
+		user, ok := managedAccessTarget(c)
+		if !ok {
+			return
+		}
+		userGroup = user.Group
 	}
-	user, err := model.GetUserCache(id)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	groups := service.GetUserUsableGroups(user.Group)
+	groups := service.GetUserUsableGroups(userGroup)
 	group := c.Query("group")
 	var groupsToQuery []string
 	switch {
@@ -678,7 +684,7 @@ func GetUserModels(c *gin.Context) {
 		}
 	case group == "auto":
 		if _, ok := groups[group]; ok {
-			groupsToQuery = service.GetUserAutoGroup(user.Group)
+			groupsToQuery = service.GetUserAutoGroup(userGroup)
 		}
 	default:
 		if _, ok := groups[group]; ok {

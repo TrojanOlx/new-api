@@ -18,8 +18,10 @@ type UserAccessPolicyResponse struct {
 }
 
 type UserDeviceUpdateRequest struct {
-	Status *string `json:"status"`
-	Remark *string `json:"remark"`
+	Status        *string   `json:"status"`
+	Remark        *string   `json:"remark"`
+	RateLimitRPM  *int      `json:"rate_limit_rpm"`
+	BlockedModels *[]string `json:"blocked_models"`
 }
 
 type UserDeviceFingerprintUpdateRequest struct {

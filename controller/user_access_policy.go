@@ -260,13 +260,27 @@ func UpdateUserDevice(c *gin.Context) {
 		writeUserAccessControllerError(c, http.StatusBadRequest, errors.New("device remark is too long"))
 		return
 	}
-	mutation, err := updateUserDeviceForAdmin(user.Id, deviceID, model.UserDevicePatch{Status: request.Status, Remark: request.Remark})
+	mutation, err := updateUserDeviceForAdmin(user.Id, deviceID, model.UserDevicePatch{
+		Status: request.Status, Remark: request.Remark,
+		RateLimitRPM: request.RateLimitRPM, BlockedModels: request.BlockedModels,
+	})
 	if mutation != nil && mutation.Changed {
-		recordManageAuditFor(c, user.Id, "user.device_status_update", map[string]interface{}{
+		params := map[string]interface{}{
 			"target_user_id": user.Id,
 			"device_id":      deviceID, "old_status": mutation.Before.Status, "status": mutation.After.Status,
-			"remark_changed": mutation.RemarkChanged,
-		})
+			"remark_changed":     mutation.RemarkChanged,
+			"old_rate_limit_rpm": mutation.Before.RateLimitRPM, "rate_limit_rpm": mutation.After.RateLimitRPM,
+			"rate_limit_changed":     mutation.Before.RateLimitRPM != mutation.After.RateLimitRPM,
+			"blocked_models_changed": mutation.Before.BlockedModelsJSON != mutation.After.BlockedModelsJSON,
+			"controls_changed":       mutation.ControlsChanged,
+		}
+		beforeControls, beforeErr := mutation.Before.RequestControls()
+		afterControls, afterErr := mutation.After.RequestControls()
+		if beforeErr == nil && afterErr == nil {
+			params["old_blocked_model_count"] = len(beforeControls.BlockedModels)
+			params["blocked_model_count"] = len(afterControls.BlockedModels)
+		}
+		recordManageAuditFor(c, user.Id, "user.device_status_update", params)
 	}
 	if err != nil {
 		if errors.Is(err, model.ErrUserAccessPolicyCachePublish) {
@@ -274,8 +288,13 @@ func UpdateUserDevice(c *gin.Context) {
 			return
 		}
 		status := http.StatusInternalServerError
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
 			status = http.StatusNotFound
+		case errors.Is(err, model.ErrInvalidUserDeviceRateLimit),
+			errors.Is(err, model.ErrInvalidUserDeviceBlockedModels),
+			errors.Is(err, model.ErrUserDeviceControlsRequirePolicy):
+			status = http.StatusBadRequest
 		}
 		writeUserAccessControllerError(c, status, err)
 		return
