@@ -49,7 +49,8 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
 			return
 		}
-		if !enforceUserDeviceModelAccess(c, modelRequest.Model) {
+		countUserDeviceRequest := shouldCountUserDeviceRequest(c, shouldSelectChannel)
+		if countUserDeviceRequest && !enforceUserDeviceModelAccess(c, userDeviceModelName(c, modelRequest.Model)) {
 			return
 		}
 		modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
@@ -75,7 +76,7 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 		}
-		if !enforceUserDeviceRateLimit(c, shouldCountUserDeviceRequest(c, shouldSelectChannel)) {
+		if !enforceUserDeviceRateLimit(c, countUserDeviceRequest) {
 			return
 		}
 		if pin, found, overridden := constraints.ResolvedPin(); found {
@@ -210,6 +211,15 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func userDeviceModelName(c *gin.Context, resolved string) string {
+	if c != nil {
+		if clientModel := common.GetContextKeyString(c, constant.ContextKeyClientModel); strings.TrimSpace(clientModel) != "" {
+			return clientModel
+		}
+	}
+	return resolved
 }
 
 func channelMatchesExpectedTaskPlugin(c *gin.Context, channel *model.Channel, expected string) bool {
@@ -447,6 +457,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		relayMode := relayconstant.RelayModeVideoSubmit
 		c.Set("relay_mode", relayMode)
 		shouldSelectChannel = false
+		modelRequest.Model = getTaskOriginModelName(c, true)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/videos") {
 		//curl https://api.openai.com/v1/videos \
 		//  -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -466,7 +477,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
 			shouldSelectChannel = false
-			modelRequest.Model = getTaskOriginModelName(c)
+			modelRequest.Model = getTaskOriginModelName(c, false)
 		}
 		c.Set("relay_mode", relayMode)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
@@ -481,7 +492,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
 			shouldSelectChannel = false
-			modelRequest.Model = getTaskOriginModelName(c)
+			modelRequest.Model = getTaskOriginModelName(c, false)
 		}
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
@@ -517,7 +528,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
-	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") || strings.HasPrefix(c.Request.URL.Path, "/v1/edits") {
 		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
 		contentType := c.ContentType()
 		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
@@ -599,16 +610,23 @@ func shouldCountUserDeviceRequest(c *gin.Context, shouldSelectChannel bool) bool
 	}
 }
 
-// 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
-// 当 token 启用「可用模型限制」时，下游 modelLimitEnable 校验会因
-// modelRequest.Model 为空而误报 "This token has no access to model"。
-// 从已存储的任务记录中回填 OriginModelName 即可让校验走在正确的模型上。
-func getTaskOriginModelName(c *gin.Context) string {
+// Task fetches need the stored model for token allowlists. Creation paths that
+// derive from an existing task, such as video remix, also need it for device
+// controls even when the token has no model allowlist.
+func getTaskOriginModelName(c *gin.Context, requiredForDeviceControls bool) string {
 	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
-		return ""
+		if !requiredForDeviceControls {
+			return ""
+		}
+		if _, hasDeviceControls := userDeviceRequestControls(c); !hasDeviceControls {
+			return ""
+		}
 	}
 
 	taskId := c.Param("task_id")
+	if taskId == "" {
+		taskId = c.Param("video_id")
+	}
 	if taskId == "" {
 		return ""
 	}

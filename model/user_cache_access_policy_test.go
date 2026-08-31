@@ -1,11 +1,14 @@
 package model
 
 import (
+	"context"
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -217,6 +220,39 @@ func TestUserCacheAccessPolicyFenceRejectsStaleAccessButNotDashboardReads(t *tes
 
 	err = writeUserCache(user.ToBaseUser(), false)
 	assert.ErrorIs(t, err, ErrUserAccessPolicyCachePending)
+}
+
+func TestUserCacheForAccessFailsClosedWhenRedisFenceIsUnavailable(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	oldRDB := common.RDB
+	common.RedisEnabled = true
+	common.RDB = redis.NewClient(&redis.Options{
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("forced redis fence failure")
+		},
+		MaxRetries: -1,
+	})
+	t.Cleanup(func() {
+		_ = common.RDB.Close()
+		common.RedisEnabled = oldRedisEnabled
+		common.RDB = oldRDB
+	})
+
+	user := User{
+		Username:              "policy-fence-unavailable",
+		Password:              "password",
+		Role:                  common.RoleCommonUser,
+		Status:                common.UserStatusEnabled,
+		Group:                 "default",
+		AuthVersion:           1,
+		AccessPolicyVersion:   1,
+		DeviceControlsEnabled: true,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	_, err := GetUserCacheForAccess(user.Id)
+	require.ErrorContains(t, err, "forced redis fence failure")
 }
 
 func TestUserAccessPolicyDatabaseFallbackAndProfileUpdateIsolation(t *testing.T) {

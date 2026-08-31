@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
+	appI18n "github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -161,6 +164,127 @@ func TestDistributeEnforcesModelControlsBeforePinnedChannel(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, recorder.Code)
 		assert.Zero(t, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	})
+}
+
+func TestDistributeAllowsTaskFetchForDeviceBlockedModel(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	setupOriginTaskDB(t)
+	channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+	task := insertOriginOwnedTask(t, "device-control-fetch", 81, channel.Id, "sora", "gpt-5.6-sol")
+
+	for _, testCase := range []struct {
+		name string
+		path string
+	}{
+		{name: "OpenAI video", path: "/v1/videos/" + task.TaskID},
+		{name: "legacy video generation", path: "/v1/video/generations/" + task.TaskID},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, testCase.path, nil)
+			c.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+			common.SetContextKey(c, constant.ContextKeyUserId, 81)
+			common.SetContextKey(c, constant.ContextKeyUserDeviceControls, service.UserDeviceRequestControls{
+				DeviceId: 91, FingerprintId: 92, BlockedModels: []string{"gpt-5.6-sol"},
+			})
+
+			Distribute()(c)
+
+			assert.False(t, c.IsAborted())
+			assert.Equal(t, http.StatusOK, recorder.Code)
+		})
+	}
+}
+
+func TestDistributeKeepsTokenModelLimitOnTaskFetch(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	setupOriginTaskDB(t)
+	channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+	task := insertOriginOwnedTask(t, "token-model-fetch", 82, channel.Id, "sora", "gpt-5.6-sol")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID, nil)
+	c.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	common.SetContextKey(c, constant.ContextKeyUserId, 82)
+	common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"gpt-5.6-terra": true})
+
+	Distribute()(c)
+
+	assert.True(t, c.IsAborted())
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestDistributeBlocksRemixForDeviceBlockedOriginModel(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	discardUserDeviceAccessStatsForTest(t)
+	setupOriginTaskDB(t)
+	channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+	task := insertOriginOwnedTask(t, "device-control-remix-blocked", 83, channel.Id, "sora", "gpt-5.6-sol")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/"+task.TaskID+"/remix", nil)
+	c.Params = gin.Params{{Key: "video_id", Value: task.TaskID}}
+	common.SetContextKey(c, constant.ContextKeyUserId, 83)
+	common.SetContextKey(c, constant.ContextKeyUserDeviceControls, service.UserDeviceRequestControls{
+		DeviceId: 93, FingerprintId: 94, BlockedModels: []string{"gpt-5.6-sol"},
+	})
+
+	Distribute()(c)
+
+	assert.True(t, c.IsAborted())
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "access_denied")
+}
+
+func TestGetModelRequestExtractsMultipartModelForLegacyEdits(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-1"))
+	require.NoError(t, writer.WriteField("prompt", "edit this image"))
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/edits", &body)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	request, shouldSelectChannel, err := getModelRequest(c)
+	require.NoError(t, err)
+	require.True(t, shouldSelectChannel)
+	assert.Equal(t, "gpt-image-1", request.Model)
+}
+
+func TestGetModelRequestResolvesRemixOriginModelForDeviceControls(t *testing.T) {
+	setupOriginTaskDB(t)
+	channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+	task := insertOriginOwnedTask(t, "device-control-remix", 81, channel.Id, "sora", "gpt-5.6-sol")
+	persisted, exists, lookupErr := model.GetByTaskId(81, task.TaskID)
+	require.NoError(t, lookupErr)
+	require.True(t, exists)
+	assert.Equal(t, "gpt-5.6-sol", persisted.Properties.OriginModelName)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/"+task.TaskID+"/remix", nil)
+	c.Params = gin.Params{{Key: "video_id", Value: task.TaskID}}
+	common.SetContextKey(c, constant.ContextKeyUserId, 81)
+	common.SetContextKey(c, constant.ContextKeyUserDeviceControls, service.UserDeviceRequestControls{DeviceId: 91})
+
+	request, shouldSelectChannel, err := getModelRequest(c)
+	require.NoError(t, err)
+	require.False(t, shouldSelectChannel)
+	assert.Equal(t, "gpt-5.6-sol", request.Model)
+}
+
+func TestUserDeviceModelNamePrefersOriginalClientModelOverResolvedPluginModel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("resolved_task_model", "canonical-model")
+	common.SetContextKey(c, constant.ContextKeyClientModel, "client-alias")
+
+	assert.Equal(t, "client-alias", userDeviceModelName(c, "canonical-model"))
 }
 
 func TestShouldCountUserDeviceRequest(t *testing.T) {

@@ -52,7 +52,7 @@ func insertOriginTaskChannel(t *testing.T, status int) *model.Channel {
 	return channel
 }
 
-func insertOriginOwnedTask(t *testing.T, taskID string, userID, channelID int, platform constant.TaskPlatform) *model.Task {
+func insertOriginOwnedTask(t *testing.T, taskID string, userID, channelID int, platform constant.TaskPlatform, originModel ...string) *model.Task {
 	t.Helper()
 	task := &model.Task{
 		TaskID:    taskID,
@@ -68,6 +68,9 @@ func insertOriginOwnedTask(t *testing.T, taskID string, userID, channelID int, p
 	data, err := common.Marshal(map[string]any{"id": "upstream-" + taskID})
 	require.NoError(t, err)
 	task.Data = data
+	if len(originModel) > 0 {
+		task.Properties.OriginModelName = originModel[0]
+	}
 	require.NoError(t, model.DB.Create(task).Error)
 	return task
 }

@@ -48,6 +48,31 @@ func TestPrepareTaskPluginSubmitRejectsMissingModel(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "model is required")
 }
 
+func TestPrepareTaskPluginSubmitPreservesClientModelBeforeCanonicalization(t *testing.T) {
+	const key = "legacy-client-model-test"
+	_, err := jsplugin.DefaultRegistry.Register(strings.ReplaceAll(genericTaskPluginSource, "generic-entry-test", key), jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(key)) })
+
+	var clientModel string
+	var resolvedModel string
+	router := gin.New()
+	router.POST("/v1/tasks/:key", PrepareTaskPluginSubmit(), func(c *gin.Context) {
+		clientModel = common.GetContextKeyString(c, constant.ContextKeyClientModel)
+		resolvedModel = c.GetString("resolved_task_model")
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/tasks/"+key, strings.NewReader(`{"model":"DOC","prompt":"hello"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+	assert.Equal(t, "DOC", clientModel)
+	assert.Equal(t, "doc", resolvedModel)
+}
+
 func TestPrepareTaskPluginRouteUsesCanonicalContextAndResolvedSubmit(t *testing.T) {
 	plugin := compileTaskRoutePlugin(t, `
 export const meta = {
@@ -94,6 +119,40 @@ export function parseTaskResult() { return {status: "SUCCESS"}; }
 
 	assert.True(t, reachedSubmit)
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
+func TestPrepareTaskPluginRoutePreservesClientModelBeforeResolution(t *testing.T) {
+	plugin := compileTaskRoutePlugin(t, `
+export const meta = {
+  apiVersion: 1, key: "route-client-model-test", name: "Client model", version: "1.0.0",
+  author: {name: "Test"},
+  models: ["canonical-model"], fetchMode: "per_task",
+  routes: [{method: "POST", path: "/vendor/jobs", type: "submit", decode: "decodeJob", render: "jobCreated"}],
+};
+export const native = {
+  decodeJob: function() { return {kind: "submit", model: "canonical-model", requestBody: {prompt: "normalized"}}; },
+  jobCreated: function(ctx, task) { return task; },
+};
+export function buildSubmitRequest() { return {url: "https://example.com"}; }
+export function parseSubmitResponse() { return {taskId: "one"}; }
+export function buildQueryRequest() { return {url: "https://example.com"}; }
+export function parseTaskResult() { return {status: "SUCCESS"}; }
+`)
+
+	var clientModel string
+	router := gin.New()
+	router.POST("/vendor/jobs", pinTaskPluginRoute(plugin, 0), PrepareTaskPluginRoute(), func(c *gin.Context) {
+		clientModel = common.GetContextKeyString(c, constant.ContextKeyClientModel)
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/vendor/jobs", strings.NewReader(`{"model":"client-alias","prompt":"hello"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+	assert.Equal(t, "client-alias", clientModel)
 }
 
 func TestPrepareTaskPluginNativeRouteRejectsMultipartBeforeDecoder(t *testing.T) {
@@ -510,6 +569,34 @@ func TestPrepareTaskPluginEndpointPinsGenerationBeforeParseAndDistribution(t *te
 
 	assert.True(t, reachedDistribution)
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
+func TestPinTaskPluginEndpointPreservesClientModelBeforeCanonicalization(t *testing.T) {
+	const key = "endpoint-client-model-test"
+	_, err := jsplugin.DefaultRegistry.Register(taskProtocolPluginSource(
+		key,
+		"1.0.0",
+		`["claimed-model"]`,
+		"/v1/responses",
+		`return {model: ctx.model};`,
+	), jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(key)) })
+
+	var clientModel string
+	router := gin.New()
+	router.POST("/v1/responses", PinTaskPluginEndpoint(), func(c *gin.Context) {
+		clientModel = common.GetContextKeyString(c, constant.ContextKeyClientModel)
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"CLAIMED-MODEL"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+	assert.Equal(t, "CLAIMED-MODEL", clientModel)
 }
 
 func TestPrepareTaskPluginEndpointClientDisconnectDoesNotCancelParseHook(t *testing.T) {

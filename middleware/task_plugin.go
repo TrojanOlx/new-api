@@ -117,6 +117,11 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 			renderTaskPluginQuery(c, pinned, requestContext, []string{taskID}, pinned.Route.Render, false)
 			return
 		}
+		if bodyValue, ok := bodyObject["value"].(map[string]any); ok {
+			if clientModel, ok := bodyValue["model"].(string); ok && strings.TrimSpace(clientModel) != "" {
+				common.SetContextKey(c, constant.ContextKeyClientModel, clientModel)
+			}
+		}
 
 		if len(pinned.Route.Models) > 0 {
 			bodyValue, _ := bodyObject["value"].(map[string]any)
@@ -367,6 +372,7 @@ func PinTaskPluginEndpoint() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		common.SetContextKey(c, constant.ContextKeyClientModel, claimedModel)
 		if rewriteTo != "" {
 			if rewriteErr := rewriteTaskPluginJSONModel(c, rewriteTo); rewriteErr != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, "Invalid task protocol request")
@@ -1422,6 +1428,7 @@ func PrepareTaskPluginSubmit() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 			return
 		}
+		common.SetContextKey(c, constant.ContextKeyClientModel, modelName)
 		exactOwned := slices.Contains(plugin.Meta.Models, modelName)
 		exactAlias := false
 		if target, resolved := model.ResolveTaskModelAlias(generation, modelName); resolved && target.Alias == modelName && target.PluginKey == plugin.Meta.Key {

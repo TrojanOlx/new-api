@@ -7,7 +7,10 @@ const (
 	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
-	ContextKeyOriginalModel    ContextKey = "original_model"
+	ContextKeyOriginalModel ContextKey = "original_model"
+	// ContextKeyClientModel preserves the exact model identifier supplied by
+	// the client before a task plugin canonicalizes or aliases it.
+	ContextKeyClientModel      ContextKey = "client_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
 
 	/* token related keys */
