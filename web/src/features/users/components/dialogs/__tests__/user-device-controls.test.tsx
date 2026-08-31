@@ -357,6 +357,49 @@ describe('administrator device request controls', () => {
     expect(
       screen.getByRole('combobox', { name: /blocked models/i })
     ).toBeDisabled()
+    expect(
+      screen.queryByRole('button', { name: /clear device controls/i })
+    ).not.toBeInTheDocument()
+  })
+
+  test('offers a clear-only recovery action when off mode has active controls', async () => {
+    const user = userEvent.setup()
+    installApiFixtures(
+      { device_mode: 'off' },
+      {
+        rate_limit_rpm: 120,
+        blocked_models: ['gpt-5.6-sol'],
+      }
+    )
+    renderDialog()
+    await openDeviceDetail(user)
+
+    const clearButton = await screen.findByRole('button', {
+      name: /clear device controls/i,
+    })
+    expect(clearButton).toBeVisible()
+    expect(screen.getByRole('switch', { name: /rate limit/i })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    expect(
+      screen.getByRole('spinbutton', { name: /requests per minute/i })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('combobox', { name: /blocked models/i })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: /save device controls/i })
+    ).toBeDisabled()
+
+    await user.click(clearButton)
+
+    await waitFor(() =>
+      expect(apiMocks.updateUserDevice).toHaveBeenCalledWith(7, 31, {
+        rate_limit_rpm: 0,
+        blocked_models: [],
+      })
+    )
   })
 
   test('shows device controls under their matching list columns', async () => {

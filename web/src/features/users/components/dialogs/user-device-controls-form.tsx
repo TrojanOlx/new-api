@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { FloppyDiskIcon } from '@hugeicons/core-free-icons'
+import { Delete02Icon, FloppyDiskIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
@@ -79,6 +79,8 @@ export function UserDeviceControlsForm(props: UserDeviceControlsFormProps) {
     props.device.blocked_models
   )
   const controlsDisabled = props.deviceMode === 'off'
+  const hasActiveControls =
+    props.device.rate_limit_rpm > 0 || props.device.blocked_models.length > 0
   const effectiveRPM = rateLimitEnabled ? rateLimitRPM : 0
   const blockedModelsResult =
     userDeviceBlockedModelsSchema.safeParse(blockedModels)
@@ -141,6 +143,10 @@ export function UserDeviceControlsForm(props: UserDeviceControlsFormProps) {
     mutation.mutate(result.data)
   }
 
+  const clearControls = () => {
+    mutation.mutate({ rate_limit_rpm: 0, blocked_models: [] })
+  }
+
   return (
     <section
       className='flex flex-col gap-3'
@@ -158,6 +164,24 @@ export function UserDeviceControlsForm(props: UserDeviceControlsFormProps) {
               'Enable Observe or a stricter device mode before configuring controls.'
             )}
           </AlertDescription>
+          {hasActiveControls && (
+            <div className='mt-3 flex justify-end'>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                disabled={mutation.isPending}
+                onClick={clearControls}
+              >
+                {mutation.isPending ? (
+                  <Spinner data-icon='inline-start' />
+                ) : (
+                  <HugeiconsIcon icon={Delete02Icon} data-icon='inline-start' />
+                )}
+                {t('Clear device controls')}
+              </Button>
+            </div>
+          )}
         </Alert>
       )}
 
