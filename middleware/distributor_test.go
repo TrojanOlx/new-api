@@ -2,12 +2,19 @@ package middleware
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,6 +109,84 @@ func TestSharedEndpointRebindsToSelectedLegacyProvider(t *testing.T) {
 	assert.Equal(t, "vertex-shared", c.GetString("expected_task_plugin_key"))
 	assert.Equal(t, "vertex-shared", c.GetString("task_plugin_key"))
 	assert.True(t, channelMatchesExpectedTaskPlugin(c, geminiChannel, "vertex-shared"), "a retry may select another declared provider")
+}
+
+func TestDistributeEnforcesModelControlsBeforePinnedChannel(t *testing.T) {
+	discardUserDeviceAccessStatsForTest(t)
+	t.Run("device blocked model", func(t *testing.T) {
+		setupOriginTaskDB(t)
+		channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/vendor/jobs", strings.NewReader(`{}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("resolved_task_model", "gpt-5.6-sol")
+		common.SetContextKey(c, constant.ContextKeyUserId, 81)
+		common.SetContextKey(c, constant.ContextKeyUserDeviceControls, service.UserDeviceRequestControls{
+			DeviceId: 91, FingerprintId: 92, BlockedModels: []string{"gpt-5.6-sol"},
+		})
+		service.GetChannelConstraints(c).AddPin(taskdto.ChannelPin{
+			ChannelId: channel.Id, Source: taskdto.PinSourceOriginTask,
+			Rank: taskdto.PinRankOriginTask, RetryMode: taskdto.PinRetrySameChannel,
+		})
+
+		Distribute()(c)
+
+		assert.True(t, c.IsAborted())
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "access_denied")
+		assert.Zero(t, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+	})
+
+	t.Run("token model limit", func(t *testing.T) {
+		setupOriginTaskDB(t)
+		channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/vendor/jobs", strings.NewReader(`{}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("resolved_task_model", "gpt-5.6-sol")
+		common.SetContextKey(c, constant.ContextKeyUserId, 82)
+		common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+		common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"gpt-5.6-terra": true})
+		common.SetContextKey(c, constant.ContextKeyUserDeviceControls, service.UserDeviceRequestControls{DeviceId: 93, FingerprintId: 94})
+		service.GetChannelConstraints(c).AddPin(taskdto.ChannelPin{
+			ChannelId: channel.Id, Source: taskdto.PinSourceOriginTask,
+			Rank: taskdto.PinRankOriginTask, RetryMode: taskdto.PinRetrySameChannel,
+		})
+
+		Distribute()(c)
+
+		assert.True(t, c.IsAborted())
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		assert.Zero(t, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+	})
+}
+
+func TestShouldCountUserDeviceRequest(t *testing.T) {
+	for _, testCase := range []struct {
+		name                string
+		method              string
+		path                string
+		shouldSelectChannel bool
+		relayMode           int
+		want                bool
+	}{
+		{name: "responses create", method: http.MethodPost, path: "/v1/responses", shouldSelectChannel: true, want: true},
+		{name: "websocket handshake", method: http.MethodGet, path: "/v1/realtime", shouldSelectChannel: true, want: true},
+		{name: "task fetch", method: http.MethodGet, path: "/v1/videos/task-1", relayMode: relayconstant.RelayModeVideoFetchByID, want: false},
+		{name: "task list query", method: http.MethodPost, path: "/mj/task/list-by-condition", relayMode: relayconstant.RelayModeMidjourneyTaskFetchByCondition, want: false},
+		{name: "video remix", method: http.MethodPost, path: "/v1/videos/video-1/remix", relayMode: relayconstant.RelayModeVideoSubmit, want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(testCase.method, testCase.path, nil)
+			if testCase.relayMode != 0 {
+				c.Set("relay_mode", testCase.relayMode)
+			}
+			assert.Equal(t, testCase.want, shouldCountUserDeviceRequest(c, testCase.shouldSelectChannel))
+		})
+	}
 }
 
 func distributorTaskPluginSource(key string, channelType int) string {

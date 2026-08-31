@@ -41,6 +41,8 @@ user_access.device_blocked: "目前裝置已被封鎖"
 user_access.upgrade_grace_expired: "裝置升級審核已過期"
 user_access.network_conflict: "偵測到目前裝置存在網路衝突"
 user_access.unavailable: "存取控制暫時不可用"
+user_access.model_not_allowed: "目前裝置無權存取模型 {{.Model}}"
+user_access.device_rate_limited: "目前裝置已超過請求頻率限制"
 
 # Token messages
 token.name_too_long: "令牌名稱過長"

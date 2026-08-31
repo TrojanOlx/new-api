@@ -45,6 +45,39 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		if shouldSelectChannel && modelRequest.Model == "" {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
+			return
+		}
+		if !enforceUserDeviceModelAccess(c, modelRequest.Model) {
+			return
+		}
+		modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+		if modelLimitEnable {
+			s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+			if !ok {
+				if controls, found := userDeviceRequestControls(c); found {
+					recordUserDeviceRequestDenied(c, controls)
+				}
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+				return
+			}
+			tokenModelLimit, ok := s.(map[string]bool)
+			if !ok {
+				tokenModelLimit = map[string]bool{}
+			}
+			matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model)
+			if _, ok := tokenModelLimit[matchName]; !ok {
+				if controls, found := userDeviceRequestControls(c); found {
+					recordUserDeviceRequestDenied(c, controls)
+				}
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+				return
+			}
+		}
+		if !enforceUserDeviceRateLimit(c, shouldCountUserDeviceRequest(c, shouldSelectChannel)) {
+			return
+		}
 		if pin, found, overridden := constraints.ResolvedPin(); found {
 			for _, lost := range overridden {
 				logger.LogWarn(c, fmt.Sprintf(
@@ -78,32 +111,7 @@ func Distribute() func(c *gin.Context) {
 			}
 		} else {
 			// Select a channel for the user
-			// check token model mapping
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model) // match gpts & thinking-*
-				if _, ok := tokenModelLimit[matchName]; !ok {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
-					return
-				}
-			}
-
 			if shouldSelectChannel {
-				if modelRequest.Model == "" {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
-					return
-				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 				// check path is /pg/chat/completions
@@ -553,6 +561,42 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 
 	return &modelRequest, shouldSelectChannel, nil
+}
+
+func shouldCountUserDeviceRequest(c *gin.Context, shouldSelectChannel bool) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if c.Request.Method == http.MethodGet {
+		return shouldSelectChannel && strings.HasPrefix(c.Request.URL.Path, "/v1/realtime")
+	}
+	if c.Request.Method != http.MethodPost {
+		return false
+	}
+	if shouldSelectChannel {
+		return true
+	}
+	relayMode := c.GetInt("relay_mode")
+	if relayMode == relayconstant.RelayModeVideoSubmit {
+		return true
+	}
+	switch relayMode {
+	case relayconstant.RelayModeMidjourneyImagine,
+		relayconstant.RelayModeMidjourneyDescribe,
+		relayconstant.RelayModeMidjourneyBlend,
+		relayconstant.RelayModeMidjourneyChange,
+		relayconstant.RelayModeMidjourneySimpleChange,
+		relayconstant.RelayModeMidjourneyAction,
+		relayconstant.RelayModeMidjourneyModal,
+		relayconstant.RelayModeMidjourneyShorten,
+		relayconstant.RelayModeSwapFace,
+		relayconstant.RelayModeMidjourneyUpload,
+		relayconstant.RelayModeMidjourneyVideo,
+		relayconstant.RelayModeMidjourneyEdits:
+		return true
+	default:
+		return false
+	}
 }
 
 // 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，

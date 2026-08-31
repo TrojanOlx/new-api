@@ -41,6 +41,8 @@ user_access.device_blocked: "当前设备已被阻止"
 user_access.upgrade_grace_expired: "设备升级审核已过期"
 user_access.network_conflict: "检测到当前设备存在网络冲突"
 user_access.unavailable: "访问控制暂时不可用"
+user_access.model_not_allowed: "当前设备无权访问模型 {{.Model}}"
+user_access.device_rate_limited: "当前设备已超过请求频率限制"
 
 # Token messages
 token.name_too_long: "令牌名称过长"

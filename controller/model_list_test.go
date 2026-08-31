@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -429,6 +430,31 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-empty-expr-model")
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
+}
+
+func TestListModelsHidesExactDeviceBlockedModels(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "gpt-5.6-sol", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "gpt-5.6-sol-alias", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "gpt-5.6-terra", ChannelId: 1, Enabled: true},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserDeviceControls, service.UserDeviceRequestControls{
+		DeviceId: 11, FingerprintId: 12, BlockedModels: []string{"gpt-5.6-sol"},
+	})
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	assert.NotContains(t, ids, "gpt-5.6-sol")
+	assert.Contains(t, ids, "gpt-5.6-sol-alias")
+	assert.Contains(t, ids, "gpt-5.6-terra")
 }
 
 func TestListModelsTokenLimitUsesResolvedCustomAutoGroups(t *testing.T) {

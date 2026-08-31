@@ -48,6 +48,8 @@ const (
 	MsgUserAccessUpgradeGraceExpired = "user_access.upgrade_grace_expired"
 	MsgUserAccessNetworkConflict     = "user_access.network_conflict"
 	MsgUserAccessUnavailable         = "user_access.unavailable"
+	MsgUserAccessModelNotAllowed     = "user_access.model_not_allowed"
+	MsgUserAccessDeviceRateLimited   = "user_access.device_rate_limited"
 )
 
 // Token related messages

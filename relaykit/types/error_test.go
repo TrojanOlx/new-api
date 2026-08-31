@@ -19,3 +19,15 @@ func TestAccessControlUnavailableErrorCodeIsOpenAICompatible(t *testing.T) {
 	assert.Equal(t, "access_control_unavailable", openAIError.Type)
 	assert.Equal(t, ErrorCodeAccessControlUnavailable, openAIError.Code)
 }
+
+func TestRateLimitExceededErrorCodeIsOpenAICompatible(t *testing.T) {
+	require.Equal(t, ErrorCode("rate_limit_exceeded"), ErrorCodeRateLimitExceeded)
+
+	err := InitOpenAIError(ErrorCodeRateLimitExceeded, http.StatusTooManyRequests)
+	require.Equal(t, ErrorCodeRateLimitExceeded, err.GetErrorCode())
+	assert.Equal(t, http.StatusTooManyRequests, err.StatusCode)
+
+	openAIError := err.ToOpenAIError()
+	assert.Equal(t, "rate_limit_exceeded", openAIError.Type)
+	assert.Equal(t, ErrorCodeRateLimitExceeded, openAIError.Code)
+}

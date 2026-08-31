@@ -249,7 +249,11 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 	}
 	models := service.GetGroupsEnabledModels(ownerGroups)
+	deviceControls, hasDeviceControls := common.GetContextKeyType[service.UserDeviceRequestControls](c, constant.ContextKeyUserDeviceControls)
 	for _, modelName := range models {
+		if hasDeviceControls && service.UserDeviceBlocksModel(deviceControls, modelName) {
+			continue
+		}
 		if modelLimitEnable {
 			matchingName := ratio_setting.FormatMatchingModelName(modelName)
 			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
