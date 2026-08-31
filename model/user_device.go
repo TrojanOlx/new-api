@@ -378,6 +378,16 @@ func userHasDeviceControlsWithTx(tx *gorm.DB, userId int) (bool, error) {
 func InitializeUserDeviceControls() error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&UserDevice{}).
+			Where("rate_limit_rpm IS NULL").
+			Update("rate_limit_rpm", 0).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).
+			Where("device_controls_enabled IS NULL").
+			Update("device_controls_enabled", false).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&UserDevice{}).
 			Where("blocked_models IS NULL OR blocked_models = ? OR blocked_models = ?", "", "null").
 			Update("blocked_models", "[]").Error; err != nil {
 			return err

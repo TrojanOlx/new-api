@@ -220,6 +220,44 @@ func TestDeviceControlsFlagPublishesInCacheSchemaFour(t *testing.T) {
 	assert.Equal(t, 4, cached.CacheSchema)
 }
 
+func TestInitializeUserDeviceControlsBackfillsLegacyNullDefaults(t *testing.T) {
+	truncateTables(t)
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedisEnabled })
+
+	user := createDeviceTestUser(t, "device-controls-legacy-null")
+	device, _, err := CreateObservedUserDevice(observedDeviceInput(user.Id, "device-controls-legacy-null", time.Now().Unix()))
+	require.NoError(t, err)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).UpdateColumn("device_controls_enabled", nil).Error)
+	require.NoError(t, DB.Model(&UserDevice{}).Where("id = ?", device.Id).Updates(map[string]interface{}{
+		"rate_limit_rpm": nil,
+		"blocked_models": nil,
+	}).Error)
+
+	require.NoError(t, InitializeUserDeviceControls())
+	require.NoError(t, InitializeUserDeviceControls())
+
+	var nullUserFlags int64
+	require.NoError(t, DB.Model(&User{}).
+		Where("id = ? AND device_controls_enabled IS NULL", user.Id).
+		Count(&nullUserFlags).Error)
+	assert.Zero(t, nullUserFlags)
+	var nullRateLimits int64
+	require.NoError(t, DB.Model(&UserDevice{}).
+		Where("id = ? AND rate_limit_rpm IS NULL", device.Id).
+		Count(&nullRateLimits).Error)
+	assert.Zero(t, nullRateLimits)
+
+	var storedUser User
+	require.NoError(t, DB.First(&storedUser, user.Id).Error)
+	assert.False(t, storedUser.DeviceControlsEnabled)
+	var storedDevice UserDevice
+	require.NoError(t, DB.First(&storedDevice, device.Id).Error)
+	assert.Zero(t, storedDevice.RateLimitRPM)
+	assert.Equal(t, "[]", storedDevice.BlockedModelsJSON)
+}
+
 func TestInitializeUserDeviceControlsBackfillsCanonicalStateIdempotently(t *testing.T) {
 	truncateTables(t)
 	oldRedisEnabled := common.RedisEnabled
