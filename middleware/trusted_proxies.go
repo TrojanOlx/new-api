@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -10,28 +9,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 )
 
-var defaultTrustedProxyCIDRs = []string{
-	"127.0.0.0/8",
-	"::1",
-	"10.0.0.0/8",
-	"172.16.0.0/12",
-	"192.168.0.0/16",
-	"fc00::/7",
-}
-
 var trustedProxyMu sync.RWMutex
-var trustedProxyPrefixes = mustParseTrustedProxyPrefixes(defaultTrustedProxyCIDRs)
-
-func mustParseTrustedProxyPrefixes(values []string) []netip.Prefix {
-	prefixes, err := parseTrustedProxyPrefixes(values)
-	if err != nil {
-		panic(err)
-	}
-	return prefixes
-}
+var trustedProxyPrefixes []netip.Prefix
 
 func parseTrustedProxyPrefixes(values []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, 0, len(values))
@@ -53,39 +36,6 @@ func parseTrustedProxyPrefixes(values []string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-func parseTrustedProxyConfiguration() ([]string, []netip.Prefix, error) {
-	rawTrustedProxies := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
-	if rawTrustedProxies == "" {
-		log.Print("WARNING: TRUSTED_PROXIES is unset or blank; trusting loopback, RFC 1918, and IPv6 ULA proxy addresses for compatibility. Set TRUSTED_PROXIES=none to trust no proxies, or configure explicit proxy IPs/CIDRs to replace these defaults.")
-		trustedProxies := append([]string(nil), defaultTrustedProxyCIDRs...)
-		return trustedProxies, mustParseTrustedProxyPrefixes(trustedProxies), nil
-	}
-	if strings.EqualFold(rawTrustedProxies, "none") {
-		return nil, nil, nil
-	}
-
-	parts := strings.Split(rawTrustedProxies, ",")
-	trustedProxies := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trustedProxy := strings.TrimSpace(part)
-		if trustedProxy == "" {
-			continue
-		}
-		if strings.EqualFold(trustedProxy, "none") {
-			return nil, nil, errors.New("TRUSTED_PROXIES=none must be used alone")
-		}
-		trustedProxies = append(trustedProxies, trustedProxy)
-	}
-	if len(trustedProxies) == 0 {
-		return nil, nil, errors.New("TRUSTED_PROXIES does not contain an IP address or CIDR")
-	}
-	prefixes, err := parseTrustedProxyPrefixes(trustedProxies)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
-	}
-	return trustedProxies, prefixes, nil
-}
-
 func setTrustedProxyPrefixes(prefixes []netip.Prefix) {
 	trustedProxyMu.Lock()
 	trustedProxyPrefixes = append([]netip.Prefix(nil), prefixes...)
@@ -93,12 +43,19 @@ func setTrustedProxyPrefixes(prefixes []netip.Prefix) {
 }
 
 func ConfigureTrustedProxies(engine *gin.Engine) error {
-	trustedProxies, prefixes, err := parseTrustedProxyConfiguration()
+	trustedProxies, usedDefaults, err := common.ResolveTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
 	if err != nil {
 		return err
 	}
-	if err := engine.SetTrustedProxies(trustedProxies); err != nil {
-		return fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
+	prefixes, err := parseTrustedProxyPrefixes(trustedProxies)
+	if err != nil {
+		return err
+	}
+	if usedDefaults {
+		log.Print("WARNING: TRUSTED_PROXIES is unset or blank; trusting loopback, RFC 1918, and IPv6 ULA proxy addresses for compatibility. Set TRUSTED_PROXIES=none to trust no proxies, or configure explicit proxy IPs/CIDRs to replace these defaults.")
+	}
+	if err := common.ConfigureTrustedProxies(engine, trustedProxies); err != nil {
+		return err
 	}
 	setTrustedProxyPrefixes(prefixes)
 	return nil
