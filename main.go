@@ -352,6 +352,9 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+	if err = model.RefreshUserAccessPolicyCachesOnStartup(); err != nil {
+		return err
+	}
 
 	perfmetrics.Init()
 

@@ -154,6 +154,25 @@ func InitializeUserAccessPolicyVersions() error {
 	return DB.Model(&User{}).Where("access_policy_version IS NULL OR access_policy_version < ?", 1).Update("access_policy_version", 1).Error
 }
 
+// RefreshUserAccessPolicyCachesOnStartup reconciles durable policy versions
+// after migrations have completed and Redis is available. Cache writes keep
+// the existing quota and publish the committed access-policy version floor.
+func RefreshUserAccessPolicyCachesOnStartup() error {
+	if !common.RedisEnabled || common.RDB == nil {
+		return nil
+	}
+	var users []User
+	result := DB.Where("access_policy_version > ?", 1).FindInBatches(&users, 500, func(_ *gorm.DB, _ int) error {
+		for i := range users {
+			if err := updateUserCache(users[i]); err != nil {
+				return fmt.Errorf("refresh access policy cache for user %d: %w", users[i].Id, err)
+			}
+		}
+		return nil
+	})
+	return result.Error
+}
+
 func UpdateUserAccessPolicy(userId int, patch UserAccessPolicyPatch) (*User, bool, error) {
 	mutation, err := UpdateUserAccessPolicyWithSnapshot(userId, patch)
 	if mutation == nil {

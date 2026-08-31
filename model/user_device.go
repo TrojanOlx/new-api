@@ -376,7 +376,7 @@ func userHasDeviceControlsWithTx(tx *gorm.DB, userId int) (bool, error) {
 }
 
 func InitializeUserDeviceControls() error {
-	return DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&UserDevice{}).
 			Where("rate_limit_rpm IS NULL").
 			Update("rate_limit_rpm", 0).Error; err != nil {
@@ -421,20 +421,40 @@ func InitializeUserDeviceControls() error {
 		for userId := range enabledSet {
 			enabledUserIDs = append(enabledUserIDs, userId)
 		}
-		disable := tx.Model(&User{}).Where("device_controls_enabled = ?", true)
+		sort.Ints(enabledUserIDs)
+		usersWithDerivedState := lockForUpdate(tx).
+			Select("id", "device_controls_enabled", "access_policy_version").
+			Where("device_controls_enabled = ?", true)
 		if len(enabledUserIDs) > 0 {
-			disable = disable.Where("id NOT IN ?", enabledUserIDs)
+			usersWithDerivedState = usersWithDerivedState.Or("id IN ?", enabledUserIDs)
 		}
-		if err := disable.Update("device_controls_enabled", false).Error; err != nil {
+		var users []User
+		if err := usersWithDerivedState.Find(&users).Error; err != nil {
 			return err
 		}
-		if len(enabledUserIDs) == 0 {
-			return nil
+		for i := range users {
+			user := &users[i]
+			_, controlsEnabled := enabledSet[user.Id]
+			if controlsEnabled == user.DeviceControlsEnabled {
+				continue
+			}
+			currentVersion := user.AccessPolicyVersion
+			if currentVersion < 1 {
+				currentVersion = 1
+			}
+			if err := tx.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+				"device_controls_enabled": controlsEnabled,
+				"access_policy_version":   currentVersion + 1,
+			}).Error; err != nil {
+				return err
+			}
 		}
-		return tx.Model(&User{}).
-			Where("id IN ? AND device_controls_enabled = ?", enabledUserIDs, false).
-			Update("device_controls_enabled", true).Error
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return RefreshUserAccessPolicyCachesOnStartup()
 }
 
 func setFingerprintShortID(fingerprint *UserDeviceFingerprint) {

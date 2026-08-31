@@ -280,10 +280,49 @@ func TestInitializeUserDeviceControlsBackfillsCanonicalStateIdempotently(t *test
 	var storedUser User
 	require.NoError(t, DB.First(&storedUser, user.Id).Error)
 	assert.True(t, storedUser.DeviceControlsEnabled)
+	assert.EqualValues(t, 2, storedUser.AccessPolicyVersion)
 	var storedControlled UserDevice
 	require.NoError(t, DB.First(&storedControlled, controlled.Id).Error)
 	assert.JSONEq(t, `["gpt-5.6-sol","gpt-5.6-terra"]`, storedControlled.BlockedModelsJSON)
 	var storedEmpty UserDevice
 	require.NoError(t, DB.First(&storedEmpty, empty.Id).Error)
 	assert.Equal(t, "[]", storedEmpty.BlockedModelsJSON)
+}
+
+func TestInitializeUserDeviceControlsRefreshesStaleSchemaFourCache(t *testing.T) {
+	truncateTables(t)
+	useUserCacheMiniRedis(t)
+
+	user := createDeviceTestUser(t, "device-controls-initialize-cache")
+	user.DevicePolicyMode = string(constant.UserDevicePolicyObserve)
+	require.NoError(t, DB.Model(user).Update("device_policy_mode", user.DevicePolicyMode).Error)
+	device, _, err := CreateObservedUserDevice(observedDeviceInput(
+		user.Id,
+		"device-controls-initialize-cache",
+		time.Now().Unix(),
+	))
+	require.NoError(t, err)
+	require.NoError(t, DB.Model(&UserDevice{}).Where("id = ?", device.Id).
+		Update("blocked_models", `["gpt-5.6-sol"]`).Error)
+	require.NoError(t, populateUserCache(*user))
+
+	stale, err := cacheGetUserBaseForAccess(user.Id)
+	require.NoError(t, err)
+	assert.False(t, stale.DeviceControlsEnabled)
+	assert.EqualValues(t, 1, stale.AccessPolicyVersion)
+
+	common.RedisEnabled = false
+	require.NoError(t, InitializeUserDeviceControls())
+	common.RedisEnabled = true
+
+	stillStale, err := cacheGetUserBaseForAccess(user.Id)
+	require.NoError(t, err)
+	assert.False(t, stillStale.DeviceControlsEnabled)
+	assert.EqualValues(t, 1, stillStale.AccessPolicyVersion)
+	require.NoError(t, RefreshUserAccessPolicyCachesOnStartup())
+
+	refreshed, err := cacheGetUserBaseForAccess(user.Id)
+	require.NoError(t, err)
+	assert.True(t, refreshed.DeviceControlsEnabled)
+	assert.EqualValues(t, 2, refreshed.AccessPolicyVersion)
 }
