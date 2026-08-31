@@ -297,10 +297,15 @@ func TestShouldCountUserDeviceRequest(t *testing.T) {
 		want                bool
 	}{
 		{name: "responses create", method: http.MethodPost, path: "/v1/responses", shouldSelectChannel: true, want: true},
+		{name: "image generation", method: http.MethodPost, path: "/v1/images/generations", shouldSelectChannel: true, want: true},
 		{name: "websocket handshake", method: http.MethodGet, path: "/v1/realtime", shouldSelectChannel: true, want: true},
 		{name: "task fetch", method: http.MethodGet, path: "/v1/videos/task-1", relayMode: relayconstant.RelayModeVideoFetchByID, want: false},
 		{name: "task list query", method: http.MethodPost, path: "/mj/task/list-by-condition", relayMode: relayconstant.RelayModeMidjourneyTaskFetchByCondition, want: false},
 		{name: "video remix", method: http.MethodPost, path: "/v1/videos/video-1/remix", relayMode: relayconstant.RelayModeVideoSubmit, want: true},
+		{name: "unsupported image variation", method: http.MethodPost, path: "/v1/images/variations", shouldSelectChannel: true, want: false},
+		{name: "unsupported file upload", method: http.MethodPost, path: "/v1/files", shouldSelectChannel: true, want: false},
+		{name: "unsupported fine tune", method: http.MethodPost, path: "/v1/fine-tunes", shouldSelectChannel: true, want: false},
+		{name: "unsupported fine tune cancel", method: http.MethodPost, path: "/v1/fine-tunes/:id/cancel", shouldSelectChannel: true, want: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

@@ -564,6 +564,14 @@ func shouldCountUserDeviceRequest(c *gin.Context, shouldSelectChannel bool) bool
 		return false
 	}
 	if shouldSelectChannel {
+		routePath := c.FullPath()
+		if routePath == "" {
+			routePath = c.Request.URL.Path
+		}
+		switch routePath {
+		case "/v1/images/variations", "/v1/files", "/v1/fine-tunes", "/v1/fine-tunes/:id/cancel":
+			return false
+		}
 		return true
 	}
 	relayMode := c.GetInt("relay_mode")
