@@ -1159,6 +1159,11 @@ func renderTaskPluginQuery(
 		abortTaskPluginRouteError(c, http.StatusInternalServerError)
 		return
 	}
+	for _, task := range tasks {
+		if !EnforceTokenModelAccess(c, task.Properties.OriginModelName) {
+			return
+		}
+	}
 	logger.LogDebug(
 		c,
 		"task_plugin subsystem=query event=lookup_complete generation=%d plugin=%q requested=%d found=%d",

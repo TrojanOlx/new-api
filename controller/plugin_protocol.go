@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
@@ -946,6 +947,9 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 	}
 	if !exists || task == nil {
 		writeTaskPluginResponseNotFound(c, responseID, "missing")
+		return
+	}
+	if !middleware.EnforceTokenModelAccess(c, task.Properties.OriginModelName) {
 		return
 	}
 

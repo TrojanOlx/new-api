@@ -20,7 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -53,28 +52,8 @@ func Distribute() func(c *gin.Context) {
 		if countUserDeviceRequest && !enforceUserDeviceModelAccess(c, userDeviceModelName(c, modelRequest.Model)) {
 			return
 		}
-		modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-		if modelLimitEnable {
-			s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-			if !ok {
-				if controls, found := userDeviceRequestControls(c); found {
-					recordUserDeviceRequestDenied(c, controls)
-				}
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-				return
-			}
-			tokenModelLimit, ok := s.(map[string]bool)
-			if !ok {
-				tokenModelLimit = map[string]bool{}
-			}
-			matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model)
-			if _, ok := tokenModelLimit[matchName]; !ok {
-				if controls, found := userDeviceRequestControls(c); found {
-					recordUserDeviceRequestDenied(c, controls)
-				}
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
-				return
-			}
+		if !EnforceTokenModelAccess(c, modelRequest.Model) {
+			return
 		}
 		if !enforceUserDeviceRateLimit(c, countUserDeviceRequest) {
 			return

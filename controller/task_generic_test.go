@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	appI18n "github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
@@ -110,6 +111,63 @@ func TestGetTaskArtifactsReturnsEmptyForLegacyTask(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.Equal(t, task.TaskID, response.TaskID)
 	assert.Empty(t, response.Artifacts)
+}
+
+func TestTaskReadSurfacesEnforceTokenModelLimit(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	tests := []struct {
+		name    string
+		path    string
+		params  func(task *model.Task) gin.Params
+		handler func(c *gin.Context)
+	}{
+		{
+			name: "task detail", path: "/v1/tasks/task_generic",
+			params:  func(task *model.Task) gin.Params { return gin.Params{{Key: "key", Value: task.TaskID}} },
+			handler: GetTask,
+		},
+		{
+			name: "artifact list", path: "/v1/tasks/task_generic/artifacts",
+			params:  func(task *model.Task) gin.Params { return gin.Params{{Key: "key", Value: task.TaskID}} },
+			handler: GetTaskArtifacts,
+		},
+		{
+			name: "artifact content", path: "/v1/tasks/task_generic/artifacts/video/content",
+			params: func(task *model.Task) gin.Params {
+				return gin.Params{
+					{Key: "key", Value: task.TaskID},
+					{Key: "artifact_key", Value: "video"},
+				}
+			},
+			handler: TaskArtifactContent,
+		},
+		{
+			name: "video content", path: "/v1/videos/task_generic/content",
+			params:  func(task *model.Task) gin.Params { return gin.Params{{Key: "task_id", Value: task.TaskID}} },
+			handler: VideoProxy,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			task := setupGenericTaskTest(t)
+			task.Properties.OriginModelName = "restricted-task-model"
+			require.NoError(t, model.DB.Save(task).Error)
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			common.SetContextKey(c, constant.ContextKeyUserId, task.UserId)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"allowed-model": true})
+			c.Params = testCase.params(task)
+			c.Request = httptest.NewRequest(http.MethodGet, testCase.path, nil)
+
+			testCase.handler(c)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+			assert.NotContains(t, recorder.Body.String(), task.TaskID)
+		})
+	}
 }
 
 func TestTaskArtifactAuthorizationKeepsForeignTasksHidden(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -58,6 +59,37 @@ func enforceUserDeviceModelAccess(c *gin.Context, modelName string) bool {
 		http.StatusForbidden,
 		i18n.T(c, i18n.MsgUserAccessModelNotAllowed, map[string]any{"Model": modelName}),
 		types.ErrorCodeAccessDenied,
+	)
+	return false
+}
+
+func EnforceTokenModelAccess(c *gin.Context, modelName string) bool {
+	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		return true
+	}
+	value, found := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+	if !found {
+		if controls, hasControls := userDeviceRequestControls(c); hasControls {
+			recordUserDeviceRequestDenied(c, controls)
+		}
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+		return false
+	}
+	tokenModelLimit, ok := value.(map[string]bool)
+	if !ok {
+		tokenModelLimit = map[string]bool{}
+	}
+	matchName := ratio_setting.FormatMatchingModelName(modelName)
+	if _, allowed := tokenModelLimit[matchName]; allowed {
+		return true
+	}
+	if controls, hasControls := userDeviceRequestControls(c); hasControls {
+		recordUserDeviceRequestDenied(c, controls)
+	}
+	abortWithOpenAiMessage(
+		c,
+		http.StatusForbidden,
+		i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelName}),
 	)
 	return false
 }

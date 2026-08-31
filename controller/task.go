@@ -44,6 +44,9 @@ func GetTask(c *gin.Context) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
+	if !middleware.EnforceTokenModelAccess(c, task.Properties.OriginModelName) {
+		return
+	}
 	createdAt := task.CreatedAt
 	if createdAt == 0 {
 		createdAt = task.SubmitTime
@@ -71,6 +74,9 @@ func GetTaskArtifacts(c *gin.Context) {
 	}
 	if !exists || task == nil {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")
+		return
+	}
+	if !middleware.EnforceTokenModelAccess(c, task.Properties.OriginModelName) {
 		return
 	}
 	writeTaskArtifacts(c, task, false)
@@ -284,6 +290,9 @@ func TaskArtifactContent(c *gin.Context) {
 	}
 	if !exists || task == nil {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")
+		return
+	}
+	if !middleware.EnforceTokenModelAccess(c, task.Properties.OriginModelName) {
 		return
 	}
 	artifactKey := strings.TrimSpace(c.Param("artifact_key"))

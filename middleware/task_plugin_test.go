@@ -1084,6 +1084,52 @@ export function parseTaskResult() { return {status: "SUCCESS"}; }
 	assert.NotContains(t, recorder.Body.String(), "secret")
 }
 
+func TestPrepareTaskPluginQueryEnforcesTokenModelLimit(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	setupTaskPluginRouteDB(t)
+	plugin := compileTaskRoutePlugin(t, `
+export const meta = {
+  apiVersion: 1, key: "route-query-token-limit", name: "Query", version: "1.0.0",
+  author: {name: "Test"}, models: ["query-model"], fetchMode: "per_task",
+  routes: [{method: "POST", path: "/vendor/query", type: "dynamic", decode: "decodeQuery", render: "renderQuery"}],
+};
+export const native = {
+  decodeQuery: function() { return {kind: "query", taskIds: ["task-limited"]}; },
+  renderQuery: function(ctx, tasks) { return {id: tasks[0].task_id}; },
+};
+export function buildSubmitRequest() { return {url: "https://example.com"}; }
+export function parseSubmitResponse() { return {taskId: "one"}; }
+export function buildQueryRequest() { return {url: "https://example.com"}; }
+export function parseTaskResult() { return {status: "SUCCESS"}; }
+`)
+	insertTaskPluginRouteTask(t, &model.Task{
+		TaskID: "task-limited", UserId: 7,
+		Platform:   constant.TaskPlatform("route-query-token-limit"),
+		Properties: model.Properties{OriginModelName: "restricted-task-model"},
+	})
+
+	router := gin.New()
+	router.POST(
+		"/vendor/query",
+		pinTaskPluginRoute(plugin, 0),
+		func(c *gin.Context) {
+			common.SetContextKey(c, constant.ContextKeyUserId, 7)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"allowed-model": true})
+			c.Next()
+		},
+		PrepareTaskPluginRoute(),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/vendor/query", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.NotContains(t, recorder.Body.String(), "task-limited")
+}
+
 func TestPrepareTaskPluginDynamicDecoderRejectsRendererField(t *testing.T) {
 	plugin := compileTaskRoutePlugin(t, `
 export const meta = {apiVersion:1,key:"dynamic-renderer",name:"Dynamic",version:"1.0.0",author:{name:"Test"},models:["model"],fetchMode:"per_task",routes:[{method:"POST",path:"/vendor/query",type:"dynamic",decode:"decode",render:"show"}]};

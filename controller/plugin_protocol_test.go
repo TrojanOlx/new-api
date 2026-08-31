@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	appI18n "github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
@@ -1095,6 +1096,31 @@ func TestRetrieveTaskPluginResponsePendingSkipsRenderFinal(t *testing.T) {
 	metadata, ok := response["metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "/v1/responses/resp_retrieve_pending", metadata["retrieval_path"])
+}
+
+func TestRetrieveTaskPluginResponseEnforcesTokenModelLimit(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	c, recorder := newPluginProtocolRetrieveContext("resp_token_limited")
+	common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"allowed-model": true})
+	task := &model.Task{
+		TaskID: "task_token_limited", UserId: 71,
+		Properties: model.Properties{OriginModelName: "restricted-task-model"},
+	}
+	deps := pluginProtocolTestDeps()
+	deps.getByTaskId = func(userID int, taskID string) (*model.Task, bool, error) {
+		assert.Equal(t, 71, userID)
+		assert.Equal(t, task.TaskID, taskID)
+		return task, true, nil
+	}
+	deps.resolvePlugin = func(constant.TaskPlatform) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
+		return nil, nil, false
+	}
+
+	retrieveTaskPluginResponse(c, deps)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.NotContains(t, recorder.Body.String(), task.TaskID)
 }
 
 func TestRetrieveTaskPluginResponseEchoesOriginModelName(t *testing.T) {
