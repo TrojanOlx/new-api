@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -148,6 +149,38 @@ func TestEnforceUserDeviceRateLimitFallsBackToProcessMemoryWhenRedisUnavailable(
 	assert.Equal(t, http.StatusTooManyRequests, secondRecorder.Code)
 	assert.NotEmpty(t, secondRecorder.Header().Get("Retry-After"))
 	assert.Equal(t, "rate_limit_exceeded", decodeDeviceRequestControlError(t, secondRecorder).Error.Code)
+}
+
+func TestUserDeviceRateLimitFallbackRejectsNewBucketAtCapacity(t *testing.T) {
+	resetUserDeviceRateLimitFallbackForTest()
+	t.Cleanup(resetUserDeviceRateLimitFallbackForTest)
+	now := time.Unix(1_700_000_000, 0)
+
+	userDeviceRateLimitFallbackMu.Lock()
+	for i := range userDeviceRateLimitFallbackMax {
+		expiresAt := now.Unix() + 30
+		if i == 0 {
+			expiresAt = now.Unix() + 15
+		}
+		userDeviceRateLimitFallback[fmt.Sprintf("active-%d", i)] = userDeviceRateLimitFallbackWindow{
+			count:     1,
+			expiresAt: expiresAt,
+		}
+	}
+	userDeviceRateLimitFallbackMu.Unlock()
+
+	allowed, retryAfter := takeUserDeviceRateLimitFallback("new-device", 2, now)
+
+	assert.False(t, allowed)
+	assert.EqualValues(t, 15, retryAfter)
+	userDeviceRateLimitFallbackMu.Lock()
+	assert.Len(t, userDeviceRateLimitFallback, userDeviceRateLimitFallbackMax)
+	_, inserted := userDeviceRateLimitFallback["new-device"]
+	userDeviceRateLimitFallbackMu.Unlock()
+	assert.False(t, inserted)
+
+	allowed, _ = takeUserDeviceRateLimitFallback("active-1", 2, now)
+	assert.True(t, allowed)
 }
 
 func TestUserDeviceControlDenialsUseBatchedStatistics(t *testing.T) {

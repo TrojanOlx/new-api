@@ -112,20 +112,34 @@ func warnUserDeviceRateLimitFallback(c *gin.Context, now time.Time) {
 func takeUserDeviceRateLimitFallback(key string, maximum int, now time.Time) (bool, int64) {
 	nowUnix := now.Unix()
 	userDeviceRateLimitFallbackMu.Lock()
+	defer userDeviceRateLimitFallbackMu.Unlock()
+	var earliestExpiry int64
 	if len(userDeviceRateLimitFallback) >= userDeviceRateLimitFallbackMax {
 		for existingKey, window := range userDeviceRateLimitFallback {
 			if window.expiresAt <= nowUnix {
 				delete(userDeviceRateLimitFallback, existingKey)
+			} else if earliestExpiry == 0 || window.expiresAt < earliestExpiry {
+				earliestExpiry = window.expiresAt
 			}
 		}
 	}
 	window, found := userDeviceRateLimitFallback[key]
-	if !found || window.expiresAt <= nowUnix {
+	if found && window.expiresAt <= nowUnix {
+		delete(userDeviceRateLimitFallback, key)
+		found = false
+	}
+	if !found && len(userDeviceRateLimitFallback) >= userDeviceRateLimitFallbackMax {
+		retryAfter := earliestExpiry - nowUnix
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		return false, retryAfter
+	}
+	if !found {
 		window = userDeviceRateLimitFallbackWindow{expiresAt: nowUnix + userDeviceRateLimitWindowSeconds}
 	}
 	window.count++
 	userDeviceRateLimitFallback[key] = window
-	userDeviceRateLimitFallbackMu.Unlock()
 
 	retryAfter := window.expiresAt - nowUnix
 	if retryAfter < 1 {
