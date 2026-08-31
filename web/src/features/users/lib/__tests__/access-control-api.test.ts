@@ -50,7 +50,7 @@ const policy = {
   active_network_window_minutes: 15,
 }
 
-const device = {
+const deviceFields = {
   id: 101,
   user_id: 12,
   status: 'pending' as const,
@@ -72,8 +72,16 @@ const device = {
   updated_at: 1_700_000_100,
 }
 
+const device = {
+  ...deviceFields,
+  rate_limit_rpm: 0,
+  blocked_models: [],
+}
+
 const deviceSummary = {
-  ...device,
+  ...deviceFields,
+  rate_limit_rpm: 0,
+  blocked_model_count: 0,
   fingerprint_count: 1,
   recent_ip_count: 1,
 }
@@ -184,7 +192,7 @@ describe('administrator access-control API contracts', () => {
     await expect(
       getUserDevices(12, { p: 2, page_size: 20, status: 'pending' })
     ).resolves.toMatchObject({
-      data: { page: 2, page_size: 20, total: 1, items: [device] },
+      data: { page: 2, page_size: 20, total: 1, items: [deviceSummary] },
     })
     expect(get).toHaveBeenCalledWith('/api/user/12/devices', {
       params: { p: 2, page_size: 20, status: 'pending' },
