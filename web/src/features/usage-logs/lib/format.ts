@@ -405,6 +405,12 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'user.topup_complete': 'Completed top-up order for the user',
   'user.reset_passkey': 'Reset the user passkey',
   'user.oauth_unbind': 'Removed an OAuth binding for the user',
+  'user.access_policy_update':
+    'Updated access policy for user {{target_user_id}}',
+  'user.device_status_update':
+    'Updated device {{device_id}} for user {{target_user_id}}',
+  'user.device_fingerprint_status_update':
+    'Updated device fingerprint {{short_id}} for user {{target_user_id}}',
   // System settings
   'option.update': 'Updated system setting {{key}}',
   'option.payment_compliance': 'Confirmed payment compliance',
