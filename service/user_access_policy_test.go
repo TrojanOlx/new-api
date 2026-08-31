@@ -59,6 +59,7 @@ func useFakeUserAccessBackend(t *testing.T, backend userAccessPolicyBackend) {
 			FingerprintHash:   "fingerprint",
 			CompatibilityHash: "compatibility",
 			ClientVersion:     "0.151",
+			UserAgentHash:     "user-agent",
 		}, nil
 	}
 	t.Cleanup(func() {

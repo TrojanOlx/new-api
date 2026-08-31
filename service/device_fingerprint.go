@@ -47,6 +47,13 @@ type DeviceFingerprintEvidence struct {
 	Confidence            string
 }
 
+func (evidence DeviceFingerprintEvidence) hasIdentifyingEvidence() bool {
+	return evidence.InstallationIDPresent || evidence.UserAgentHash != "" ||
+		evidence.TLSFingerprintHash != "" || evidence.HTTP2FingerprintHash != "" ||
+		evidence.ClientFamily != "" || evidence.OSFamily != "" || evidence.Architecture != "" ||
+		evidence.Originator != "" || evidence.RuntimeFamily != ""
+}
+
 func truncateDeviceHeader(value string, maxBytes int) string {
 	if len(value) > maxBytes {
 		value = value[:maxBytes]

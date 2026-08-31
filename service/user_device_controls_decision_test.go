@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/assert"
@@ -109,6 +110,38 @@ func TestEvaluateUserAPIAccessWithDeviceControlsFailsClosedWhenFingerprintUnavai
 
 	assert.Equal(t, UserAccessUnavailable, result.Decision)
 	assert.Equal(t, "access_control_unavailable", result.Reason)
+}
+
+func TestEvaluateUserAPIAccessWithDeviceControlsFailsClosedWithoutIdentifyingEvidence(t *testing.T) {
+	backend := &fakeUserAccessBackend{resolution: userDeviceResolution{
+		DeviceId: 703, FingerprintId: 704,
+		DeviceStatus: string(constant.UserDevicePending), FingerprintStatus: string(constant.DeviceFingerprintPending),
+	}}
+	previousBackend := userAccessBackendForAccess
+	previousBuilder := buildDeviceFingerprintForAccess
+	previousSecret := common.DeviceFingerprintSecret
+	userAccessBackendForAccess = backend
+	buildDeviceFingerprintForAccess = BuildDeviceFingerprint
+	common.DeviceFingerprintSecret = "device-fingerprint-test-secret-0123456789"
+	t.Cleanup(func() {
+		userAccessBackendForAccess = previousBackend
+		buildDeviceFingerprintForAccess = previousBuilder
+		common.DeviceFingerprintSecret = previousSecret
+	})
+
+	result := EvaluateUserAPIAccess(&model.UserBase{
+		Id:                    703,
+		APIIPMode:             string(constant.UserIPPolicyUnrestricted),
+		APIIPAllowlist:        "[]",
+		DevicePolicyMode:      string(constant.UserDevicePolicyObserve),
+		DeviceControlsEnabled: true,
+		AccessPolicyVersion:   1,
+	}, netip.MustParseAddr("192.0.2.72"), DeviceRequestMetadata{CodexWindow: "window-only"}, time.Unix(1_700_500_000, 0))
+
+	assert.Equal(t, UserAccessUnavailable, result.Decision)
+	assert.Equal(t, "access_control_unavailable", result.Reason)
+	assert.Zero(t, backend.beginCalls)
+	assert.Empty(t, backend.recorded)
 }
 
 func TestEvaluateUserAPIAccessWithDeviceControlsFailsClosedWhenDeviceDecisionUnavailable(t *testing.T) {

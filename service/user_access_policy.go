@@ -458,6 +458,9 @@ func EvaluateUserAPIAccess(user *model.UserBase, clientIP netip.Addr, meta Devic
 		userAccessWarn(now, "user device fingerprint unavailable; access policy degraded open: "+err.Error())
 		return UserAccessResult{Decision: UserAccessAllow}
 	}
+	if user.DeviceControlsEnabled && !evidence.hasIdentifyingEvidence() {
+		return UserAccessResult{Decision: UserAccessUnavailable, Reason: "access_control_unavailable"}
+	}
 
 	canonicalIP := clientIP.Unmap().String()
 	ipHash := common.GenerateHMACWithKey([]byte("device-ip-v1:"+common.DeviceFingerprintSecret), canonicalIP)
