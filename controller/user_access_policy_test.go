@@ -38,6 +38,15 @@ type userAccessPolicyTestFixture struct {
 	user2  *model.User
 }
 
+func decodeAuditParam[T any](t *testing.T, value any) T {
+	t.Helper()
+	raw, ok := value.(json.RawMessage)
+	require.True(t, ok)
+	var decoded T
+	require.NoError(t, common.Unmarshal(raw, &decoded))
+	return decoded
+}
+
 func setupUserAccessPolicyControllerTest(t *testing.T) userAccessPolicyTestFixture {
 	t.Helper()
 	previousDB, previousLogDB := model.DB, model.LOG_DB
@@ -51,7 +60,7 @@ func setupUserAccessPolicyControllerTest(t *testing.T) userAccessPolicyTestFixtu
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.User{}, &model.UserSession{}, &model.UserDevice{},
-		&model.UserDeviceFingerprint{}, &model.UserDeviceIP{}, &model.Log{},
+		&model.UserDeviceFingerprint{}, &model.UserDeviceIP{}, &model.Log{}, &model.AuditLog{},
 	))
 	model.DB, model.LOG_DB = db, db
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
@@ -298,10 +307,11 @@ func TestUserAccessPolicyCommittedCacheFailureReturnsUnavailableAndAudits(t *tes
 	var stored model.User
 	require.NoError(t, fixture.db.First(&stored, fixture.user.Id).Error)
 	assert.Equal(t, string(constant.UserIPPolicyAllowlist), stored.APIIPMode)
-	var audit model.Log
-	require.NoError(t, fixture.db.Where("type = ?", model.LogTypeManage).Order("id DESC").First(&audit).Error)
-	assert.Contains(t, audit.Other, `"action":"user.access_policy_update"`)
-	assert.NotContains(t, audit.Other, "198.51.100.20")
+	var audit model.AuditLog
+	require.NoError(t, fixture.db.Where("category = ? AND action = ?", model.AuditCategoryOperation, "user.access_policy_update").Order("id DESC").First(&audit).Error)
+	encoded, err := common.Marshal(audit.Other)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "198.51.100.20")
 }
 
 func TestUserDeviceCommittedCacheFailureReturnsUnavailableAndAudits(t *testing.T) {
@@ -327,9 +337,8 @@ func TestUserDeviceCommittedCacheFailureReturnsUnavailableAndAudits(t *testing.T
 	var stored model.UserDevice
 	require.NoError(t, fixture.db.First(&stored, device.Id).Error)
 	assert.Equal(t, string(constant.UserDeviceBlocked), stored.Status)
-	var audit model.Log
-	require.NoError(t, fixture.db.Where("type = ?", model.LogTypeManage).Order("id DESC").First(&audit).Error)
-	assert.Contains(t, audit.Other, `"action":"user.device_status_update"`)
+	var audit model.AuditLog
+	require.NoError(t, fixture.db.Where("category = ? AND action = ?", model.AuditCategoryOperation, "user.device_status_update").Order("id DESC").First(&audit).Error)
 }
 
 func TestUserDeviceFingerprintCommittedCacheFailureReturnsUnavailableAndAudits(t *testing.T) {
@@ -356,10 +365,11 @@ func TestUserDeviceFingerprintCommittedCacheFailureReturnsUnavailableAndAudits(t
 	var stored model.UserDeviceFingerprint
 	require.NoError(t, fixture.db.First(&stored, fingerprint.Id).Error)
 	assert.Equal(t, string(constant.DeviceFingerprintBlocked), stored.Status)
-	var audit model.Log
-	require.NoError(t, fixture.db.Where("type = ?", model.LogTypeManage).Order("id DESC").First(&audit).Error)
-	assert.Contains(t, audit.Other, `"action":"user.device_fingerprint_status_update"`)
-	assert.NotContains(t, audit.Other, fingerprint.FingerprintHash)
+	var audit model.AuditLog
+	require.NoError(t, fixture.db.Where("category = ? AND action = ?", model.AuditCategoryOperation, "user.device_fingerprint_status_update").Order("id DESC").First(&audit).Error)
+	encoded, err := common.Marshal(audit.Other)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), fingerprint.FingerprintHash)
 }
 
 func TestUserDeviceEndpointsRejectCrossUserResourceIDs(t *testing.T) {
@@ -452,16 +462,22 @@ func TestUserAccessPolicyAuditOmitsFullIPAndFingerprintHashes(t *testing.T) {
 		map[string]any{"status": "blocked"})
 	require.Equal(t, http.StatusOK, fingerprintResponse.Code)
 
-	var logs []model.Log
-	require.NoError(t, fixture.db.Where("type = ?", model.LogTypeManage).Order("id ASC").Find(&logs).Error)
+	var logs []model.AuditLog
+	require.NoError(t, fixture.db.Where("category = ? AND action IN ?", model.AuditCategoryOperation, []string{
+		"user.access_policy_update", "user.device_fingerprint_status_update",
+	}).Order("id ASC").Find(&logs).Error)
 	require.GreaterOrEqual(t, len(logs), 2)
 	for _, log := range logs {
-		assert.NotContains(t, log.Other, "198.51.100.27")
-		assert.NotContains(t, log.Other, fingerprint.FingerprintHash)
-		assert.NotContains(t, log.Other, fingerprint.UserAgentHash)
+		encoded, err := common.Marshal(log.Other)
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "198.51.100.27")
+		assert.NotContains(t, string(encoded), fingerprint.FingerprintHash)
+		assert.NotContains(t, string(encoded), fingerprint.UserAgentHash)
 	}
-	assert.Contains(t, logs[0].Other, `"allowlist_count":1`)
-	assert.Contains(t, logs[len(logs)-1].Other, `"short_id"`)
+	require.NotNil(t, logs[0].Other.Op)
+	assert.Equal(t, 1, decodeAuditParam[int](t, logs[0].Other.Op.Params["allowlist_count"]))
+	require.NotNil(t, logs[len(logs)-1].Other.Op)
+	assert.Contains(t, logs[len(logs)-1].Other.Op.Params, "short_id")
 }
 
 func TestUserAccessPolicyAuditIncludesTargetForRootSelfUpdate(t *testing.T) {
@@ -472,15 +488,10 @@ func TestUserAccessPolicyAuditIncludesTargetForRootSelfUpdate(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, response.Code)
 
-	var log model.Log
-	require.NoError(t, fixture.db.Where("type = ?", model.LogTypeManage).Order("id DESC").First(&log).Error)
-	var other struct {
-		Operation struct {
-			Params map[string]any `json:"params"`
-		} `json:"op"`
-	}
-	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
-	assert.Equal(t, float64(fixture.root.Id), other.Operation.Params["target_user_id"])
+	var log model.AuditLog
+	require.NoError(t, fixture.db.Where("category = ? AND action = ?", model.AuditCategoryOperation, "user.access_policy_update").Order("id DESC").First(&log).Error)
+	require.NotNil(t, log.Other.Op)
+	assert.Equal(t, fixture.root.Id, decodeAuditParam[int](t, log.Other.Op.Params["target_user_id"]))
 }
 
 func TestBuildSelfUserDataExcludesAdministratorAccessControlFields(t *testing.T) {

@@ -295,25 +295,22 @@ func TestUserDeviceControlsAuditRedactsSensitiveValues(t *testing.T) {
 		map[string]any{"rate_limit_rpm": 90, "blocked_models": []string{"new-private-model", "second-private-model"}, "remark": "secret operator remark"})
 	require.Equal(t, http.StatusOK, response.Code)
 
-	var audit model.Log
-	require.NoError(t, fixture.db.Where("type = ?", model.LogTypeManage).Order("id DESC").First(&audit).Error)
+	var audit model.AuditLog
+	require.NoError(t, fixture.db.Where("category = ? AND action = ?", model.AuditCategoryOperation, "user.device_status_update").Order("id DESC").First(&audit).Error)
+	encodedAudit, err := common.Marshal(audit.Other)
+	require.NoError(t, err)
 	for _, forbidden := range []string{deviceIP, fingerprintHash, device.CompatibilityHash, "old-private-model", "new-private-model", "second-private-model", "secret operator remark"} {
-		assert.NotContains(t, audit.Other, forbidden)
+		assert.NotContains(t, string(encodedAudit), forbidden)
 	}
-	var auditEnvelope struct {
-		Operation struct {
-			Params map[string]any `json:"params"`
-		} `json:"op"`
-	}
-	require.NoError(t, common.UnmarshalJsonStr(audit.Other, &auditEnvelope))
-	assert.Equal(t, float64(fixture.user.Id), auditEnvelope.Operation.Params["target_user_id"])
-	assert.Equal(t, float64(device.Id), auditEnvelope.Operation.Params["device_id"])
-	assert.Equal(t, float64(30), auditEnvelope.Operation.Params["old_rate_limit_rpm"])
-	assert.Equal(t, float64(90), auditEnvelope.Operation.Params["rate_limit_rpm"])
-	assert.Equal(t, float64(1), auditEnvelope.Operation.Params["old_blocked_model_count"])
-	assert.Equal(t, float64(2), auditEnvelope.Operation.Params["blocked_model_count"])
-	assert.Equal(t, true, auditEnvelope.Operation.Params["controls_changed"])
-	assert.Equal(t, true, auditEnvelope.Operation.Params["remark_changed"])
+	require.NotNil(t, audit.Other.Op)
+	assert.Equal(t, fixture.user.Id, decodeAuditParam[int](t, audit.Other.Op.Params["target_user_id"]))
+	assert.Equal(t, device.Id, decodeAuditParam[int](t, audit.Other.Op.Params["device_id"]))
+	assert.Equal(t, 30, decodeAuditParam[int](t, audit.Other.Op.Params["old_rate_limit_rpm"]))
+	assert.Equal(t, 90, decodeAuditParam[int](t, audit.Other.Op.Params["rate_limit_rpm"]))
+	assert.Equal(t, 1, decodeAuditParam[int](t, audit.Other.Op.Params["old_blocked_model_count"]))
+	assert.Equal(t, 2, decodeAuditParam[int](t, audit.Other.Op.Params["blocked_model_count"]))
+	assert.True(t, decodeAuditParam[bool](t, audit.Other.Op.Params["controls_changed"]))
+	assert.True(t, decodeAuditParam[bool](t, audit.Other.Op.Params["remark_changed"]))
 }
 
 func TestGetUserModelsByAdminReturnsTargetModelsAndUsesTargetRoleGuard(t *testing.T) {

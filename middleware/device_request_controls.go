@@ -79,8 +79,7 @@ func EnforceTokenModelAccess(c *gin.Context, modelName string) bool {
 	if !ok {
 		tokenModelLimit = map[string]bool{}
 	}
-	matchName := ratio_setting.FormatMatchingModelName(modelName)
-	if _, allowed := tokenModelLimit[matchName]; allowed {
+	if tokenModelLimitAllows(tokenModelLimit, modelName) {
 		return true
 	}
 	if controls, hasControls := userDeviceRequestControls(c); hasControls {
@@ -92,6 +91,18 @@ func EnforceTokenModelAccess(c *gin.Context, modelName string) bool {
 		i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelName}),
 	)
 	return false
+}
+
+// tokenModelLimitAllows accepts the exact client model, wildcard-normalized
+// model, or routing identity after modifiers and legacy aliases are removed.
+func tokenModelLimitAllows(limit map[string]bool, modelName string) bool {
+	if limit[modelName] {
+		return true
+	}
+	if formatted := ratio_setting.FormatMatchingModelName(modelName); limit[formatted] {
+		return true
+	}
+	return limit[ratio_setting.RoutingMatchModelName(modelName)]
 }
 
 func userDeviceRateLimitKey(userID, deviceID int) string {
