@@ -400,8 +400,8 @@ func TestNoAvailableChannelMessageNamesClaimingTaskPlugin(t *testing.T) {
 	pinned.Request.Header.Set("Accept-Language", "en")
 	pinned.Set(jsplugin.ContextKeyPinnedPlugin, jsplugin.PinnedPlugin{Generation: registry.Generation(), Plugin: plugin})
 	message := noAvailableChannelMessage(pinned, "default", "kling-v1")
-	assert.Contains(t, message, `"claimer"`)
-	assert.Contains(t, message, "disable or override")
+	assert.NotContains(t, message, `"claimer"`)
+	assert.NotContains(t, message, "disable or override")
 	assert.Contains(t, message, "kling-v1")
 
 	plain, _ := gin.CreateTestContext(nil)
