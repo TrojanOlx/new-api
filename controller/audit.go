@@ -47,6 +47,8 @@ var auditContentTemplates = map[string]string{
 	"user.device_status_update":             "Updated device ${device_id} for user ${target_user_id}",
 	"user.device_fingerprint_status_update": "Updated device fingerprint ${short_id} for user ${target_user_id}",
 	"option.update":                         "Updated system setting ${key}",
+	"access_token.rename":       "Renamed an access token",
+	"access_token.update":       "Changed access token permissions",
 
 	"option.passkey_domains":           "Updated Passkey domains: removed ${domains}; affected ${known}; unknown ${unknown}",
 	"option.passkey_domains_confirmed": "Confirmed removal of Passkey domains: ${domains}; affected ${known}; unknown ${unknown}",
@@ -167,6 +169,12 @@ func recordUserSecurityAudit(c *gin.Context, userId int, action string, params m
 			params = map[string]any{}
 		}
 		params["code"] = code
+	}
+	if c.GetBool("use_access_token") {
+		if params == nil {
+			params = map[string]any{}
+		}
+		params["token_ref"] = c.GetString("access_token_ref")
 	}
 	var auditInfo *model.AuditRequestInfo
 	if success, ok := params["success"].(bool); ok {

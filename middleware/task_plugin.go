@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -140,7 +141,10 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 		}
 
 		hookStarted := time.Now()
-		resolvedValue, err := pinned.Plugin.Engine.CallMember(c.Request.Context(), "native", pinned.Route.Decode, requestContext.JSValue())
+		resolvedValue, requestBodyText, err := pinned.Plugin.Engine.CallPathWithMemberJSON(
+			c.Request.Context(), 0, pinned.Plugin.Meta.JSONTextMember("requestBody"),
+			"native", []string{pinned.Route.Decode}, requestContext.JSValueFor(pinned.Plugin.Meta),
+		)
 		if err != nil {
 			logger.LogWarn(
 				c,
@@ -241,6 +245,9 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 				c.Set(pluginruntime.ContextKeyRouteRequest, requestContext)
 			}
 			c.Set("task_request", requestContext.RequestBody)
+			if requestBodyText != nil {
+				c.Set(pluginruntime.ContextKeyRequestBodyText, requestBodyText)
+			}
 			c.Set("resolved_task_model", modelName)
 			c.Set("expected_task_plugin_key", pinned.Plugin.Meta.Key)
 			c.Set("task_plugin_key", pinned.Plugin.Meta.Key)
@@ -616,6 +623,7 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 		}
 		accepted := make([]pluginruntime.ProtocolBinding, 0, len(candidates))
 		var resolved map[string]any
+		var resolvedBodyText json.RawMessage
 		var failures []string
 		rejectedPlugins := make(map[string][]string)
 		for _, candidate := range candidates {
@@ -624,9 +632,10 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 			candidateContext.Operation = candidate.Operation.Name
 			// Parsing belongs to durable submission; disconnecting only stops
 			// the later Responses observation.
-			resolvedValue, callErr := candidate.Plugin.Engine.CallPathWithAdmissionTimeout(
+			resolvedValue, requestBodyText, callErr := candidate.Plugin.Engine.CallPathWithMemberJSON(
 				context.WithoutCancel(c.Request.Context()), pluginruntime.DefaultCallTimeout,
-				"protocols", []string{candidate.Protocol, "decodeRequest"}, candidateContext.JSValue(),
+				candidate.Plugin.Meta.JSONTextMember("requestBody"),
+				"protocols", []string{candidate.Protocol, "decodeRequest"}, candidateContext.JSValueFor(candidate.Plugin.Meta),
 			)
 			result, resultOK := resolvedValue.(map[string]any)
 			detail := ""
@@ -662,6 +671,7 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 			accepted = append(accepted, candidate)
 			if resolved == nil {
 				resolved = result
+				resolvedBodyText = requestBodyText
 				protocolContext = candidateContext
 			}
 		}
@@ -703,6 +713,9 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 		}
 		c.Set(pluginruntime.ContextKeyRouteRequest, requestContext)
 		c.Set("task_request", requestContext.RequestBody)
+		if resolvedBodyText != nil {
+			c.Set(pluginruntime.ContextKeyRequestBodyText, resolvedBodyText)
+		}
 		c.Set("resolved_task_model", resolvedModel)
 		c.Set("expected_task_plugin_key", pinned.Plugin.Meta.Key)
 		c.Set("task_plugin_key", pinned.Plugin.Meta.Key)
@@ -797,6 +810,9 @@ func buildTaskPluginRouteRequest(c *gin.Context) (pluginruntime.RouteRequestCont
 			return requestContext, err
 		}
 		requestContext.Body = map[string]any{"kind": string(pluginruntime.BodyJSON), "value": value}
+		// Body storage never changes its bytes in place (a rewrite stores a
+		// new copy), so the text needs no copy of its own.
+		requestContext.BodyText = raw
 	case mediaType == "application/x-www-form-urlencoded":
 		storage, storageErr := common.GetBodyStorage(c)
 		if storageErr != nil {
@@ -1174,7 +1190,7 @@ func renderTaskPluginQuery(
 	for _, task := range tasks {
 		tasksByID[task.TaskID] = task
 	}
-	views := make([]map[string]any, 0, len(taskIDs))
+	views := make([]dto.TaskView, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
 		task := tasksByID[taskID]
 		if task == nil || !task.ResultRetrievable() {
@@ -1194,25 +1210,20 @@ func renderTaskPluginQuery(
 			abortTaskPluginRouteError(c, http.StatusInternalServerError)
 			return
 		}
-		var viewValue map[string]any
-		encoded, marshalErr := common.Marshal(view)
-		if marshalErr != nil {
-			abortTaskPluginRouteError(c, http.StatusInternalServerError)
-			return
-		}
-		if unmarshalErr := common.Unmarshal(encoded, &viewValue); unmarshalErr != nil {
-			abortTaskPluginRouteError(c, http.StatusInternalServerError)
-			return
-		}
-		views = append(views, viewValue)
+		views = append(views, view)
 	}
 
 	var rendererInput any = views
 	if !multiple {
 		rendererInput = views[0]
 	}
+	encoded, err := common.Marshal(rendererInput)
+	if err != nil {
+		abortTaskPluginRouteError(c, http.StatusInternalServerError)
+		return
+	}
 	renderStarted := time.Now()
-	result, err := pinned.Plugin.Engine.CallPath(c.Request.Context(), "native", []string{renderer}, requestContext.JSValue(), rendererInput)
+	result, err := pinned.Plugin.Engine.CallPath(c.Request.Context(), "native", []string{renderer}, requestContext.JSValue(), pluginruntime.RawJSON(encoded))
 	if err != nil {
 		logger.LogDebug(
 			c,
@@ -1457,6 +1468,19 @@ func PrepareTaskPluginSubmit() gin.HandlerFunc {
 			}
 		}
 		c.Set("task_request", requestBody)
+		if plugin.Meta.PreservesJSONOrder() {
+			// The body as stored after any model rewrite: the text hooks get.
+			storage, err := common.GetBodyStorage(c)
+			var raw []byte
+			if err == nil {
+				raw, err = storage.Bytes()
+			}
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+				return
+			}
+			c.Set(pluginruntime.ContextKeyRequestBodyText, json.RawMessage(raw))
+		}
 		c.Set("resolved_task_model", modelName)
 		c.Set("expected_task_plugin_key", pluginKey)
 		service.AppendTaskPluginIdentityFilter(c, pluginKey)
