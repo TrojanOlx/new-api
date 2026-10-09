@@ -335,7 +335,8 @@ func TestHardDeleteUserRemovesDeviceDataInDependencyOrder(t *testing.T) {
 		FirstSeenAt: 1, LastSeenAt: 1, RequestCount: 1,
 	}).Error)
 
-	require.NoError(t, HardDeleteUserById(user.Id))
+	_, err = HardDeleteUserById(user.Id)
+	require.NoError(t, err)
 	for _, record := range []any{&UserDeviceFingerprint{}, &UserDeviceIP{}, &UserDevice{}} {
 		var count int64
 		require.NoError(t, DB.Unscoped().Model(record).Where("user_id = ?", user.Id).Count(&count).Error)
